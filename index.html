@@ -43,10 +43,6 @@
             cursor: pointer;
         }
         
-        button:hover {
-            background-color: #1c5cad;
-        }
-        
         button:disabled {
             background-color: #cccccc;
             cursor: not-allowed;
@@ -78,17 +74,31 @@
             color: #28a745;
             margin-top: 10px;
         }
+        
+        .warning {
+            background-color: #fff3cd;
+            border: 1px solid #ffeeba;
+            color: #856404;
+            padding: 10px;
+            margin-bottom: 15px;
+            border-radius: 4px;
+        }
     </style>
 </head>
 <body>
     <h2>Ollama Tableau 拡張機能</h2>
     
+    <div class="warning">
+        <strong>重要:</strong> この拡張機能を使用するには、以下のいずれかの方法でCORS制限を回避する必要があります：
+        <ul>
+            <li>EdgeのCORS関連拡張機能（CORS Unblock, Allow CORS等）を有効にする</li>
+            <li>または、Edgeを特別なモード（--disable-web-security）で起動する</li>
+        </ul>
+    </div>
+    
     <div class="form-group">
         <label for="ollama-url">Ollama サーバーURL:</label>
         <input type="text" id="ollama-url" value="http://localhost:11434" placeholder="http://localhost:11434">
-        <p style="font-size: 0.9em; color: #666;">
-            注意: Ollamaサーバーはローカルマシンで実行し、CORS Unblock拡張機能を有効にしてください
-        </p>
     </div>
     
     <div class="form-group">
@@ -128,62 +138,56 @@
             console.log('DOM Content Loaded');
             
             // Tableau拡張機能の初期化
-            tableau.extensions.initializeAsync().then(function() {
-                console.log('Tableau extension initialized');
-                
-                dashboard = tableau.extensions.dashboardContent.dashboard;
-                
-                // 最初のワークシートを取得
-                if (dashboard.worksheets.length > 0) {
-                    sheet = dashboard.worksheets[0];
-                }
-                
-                // 送信ボタンのイベントリスナー
-                document.getElementById('send-button').addEventListener('click', sendPrompt);
-                
-                // Ollamaサーバーのテスト接続
+            if (typeof tableau !== 'undefined') {
+                tableau.extensions.initializeAsync().then(function() {
+                    console.log('Tableau extension initialized');
+                    
+                    dashboard = tableau.extensions.dashboardContent.dashboard;
+                    
+                    // 最初のワークシートを取得
+                    if (dashboard.worksheets.length > 0) {
+                        sheet = dashboard.worksheets[0];
+                    }
+                    
+                    setupEventListeners();
+                    testOllamaConnection();
+                }).catch(function(err) {
+                    console.error('初期化エラー:', err);
+                    showError('Tableau拡張機能の初期化に失敗しました: ' + err);
+                });
+            } else {
+                // Tableau環境外でのテスト用
+                console.log('Running outside Tableau environment');
+                setupEventListeners();
                 testOllamaConnection();
-            }).catch(function(err) {
-                console.error('初期化エラー:', err);
-                showError('Tableau拡張機能の初期化に失敗しました: ' + err);
-            });
+            }
         });
+        
+        function setupEventListeners() {
+            document.getElementById('send-button').addEventListener('click', sendPrompt);
+            document.getElementById('ollama-url').addEventListener('change', testOllamaConnection);
+        }
         
         // Ollamaサーバーのテスト接続
         async function testOllamaConnection() {
             const ollamaUrl = document.getElementById('ollama-url').value.trim();
+            
             try {
-                const response = await fetch(`${ollamaUrl}/api/tags`, {
-                    method: 'GET',
-                    headers: {
-                        'Accept': 'application/json'
-                    }
+                // シンプルなテストリクエスト
+                const response = await fetch(ollamaUrl, {
+                    method: 'GET'
+                }).catch(error => {
+                    throw new Error('接続失敗: ' + error.message);
                 });
                 
                 if (response.ok) {
-                    const data = await response.json();
-                    const modelSelect = document.getElementById('model-select');
-                    
-                    // セレクトをクリア
-                    modelSelect.innerHTML = '';
-                    
-                    // 取得したモデルをリストに追加
-                    if (data.models && data.models.length > 0) {
-                        data.models.forEach(model => {
-                            const option = document.createElement('option');
-                            option.value = model.name;
-                            option.textContent = model.name;
-                            modelSelect.appendChild(option);
-                        });
-                        showSuccess('Ollamaサーバーに接続できました');
-                    } else {
-                        // デフォルトモデルを保持
-                        showError('利用可能なモデルが見つかりません');
-                    }
+                    showSuccess('Ollamaサーバーに接続できました');
+                } else {
+                    showError('Ollamaサーバーの応答エラー: ' + response.status);
                 }
             } catch (error) {
                 console.error('接続テストエラー:', error);
-                showError('Ollamaサーバーに接続できません。サーバーが起動していることとCORS Unblock拡張機能が有効になっていることを確認してください。');
+                showError('Ollamaサーバーに接続できません: ' + error.message);
             }
         }
         
@@ -206,20 +210,17 @@
             spinner.style.display = 'inline';
             sendButton.disabled = true;
             responseArea.textContent = '処理中...';
+            showStatus('リクエスト送信中...');
             
             // プロンプトを作成（データを含める場合）
             let finalPrompt = promptInput;
             
-            if (includeData && sheet) {
+            if (includeData && sheet && typeof tableau !== 'undefined') {
                 try {
-                    // ワークシートのデータを取得
                     const data = await sheet.getSummaryDataAsync();
-                    
-                    // 列名を取得
                     const columns = data.columns.map(col => col.fieldName);
-                    
-                    // データ行を取得（最大100行）
                     const rows = [];
+                    
                     for (let i = 0; i < Math.min(data.data.length, 100); i++) {
                         const row = data.data[i];
                         rows.push(columns.map(col => {
@@ -228,10 +229,7 @@
                         }).join('\t'));
                     }
                     
-                    // データテーブルをテキスト形式に変換
                     const tableData = columns.join('\t') + '\n' + rows.join('\n');
-                    
-                    // プロンプトにデータを追加
                     finalPrompt = `以下のTableauデータを分析して回答してください:\n\n${tableData}\n\n${promptInput}`;
                 } catch (error) {
                     console.error('データ取得エラー:', error);
@@ -244,21 +242,15 @@
             
             // Ollamaへリクエストを送信
             try {
-                console.log('送信中:', { model: modelName, prompt: finalPrompt });
-                
                 const response = await fetch(`${ollamaUrl}/api/generate`, {
                     method: 'POST',
                     headers: {
-                        'Content-Type': 'application/json',
-                        'Accept': 'application/json'
+                        'Content-Type': 'application/json'
                     },
                     body: JSON.stringify({
                         model: modelName,
                         prompt: finalPrompt,
-                        stream: false,
-                        options: {
-                            temperature: 0.7
-                        }
+                        stream: false
                     })
                 });
                 
@@ -267,15 +259,8 @@
                 }
                 
                 const data = await response.json();
-                console.log('受信データ:', data);
-                
-                if (data.response) {
-                    responseArea.textContent = data.response;
-                    showSuccess('応答を受信しました');
-                } else {
-                    responseArea.textContent = '応答が空です';
-                    showError('応答が空でした');
-                }
+                responseArea.textContent = data.response || 'レスポンスが空です';
+                showSuccess('応答を受信しました');
             } catch (error) {
                 console.error('Ollamaリクエストエラー:', error);
                 showError('エラーが発生しました: ' + error.message);
@@ -296,6 +281,12 @@
             const statusMessage = document.getElementById('status-message');
             statusMessage.textContent = message;
             statusMessage.className = 'success';
+        }
+        
+        function showStatus(message) {
+            const statusMessage = document.getElementById('status-message');
+            statusMessage.textContent = message;
+            statusMessage.className = '';
         }
     </script>
 </body>
