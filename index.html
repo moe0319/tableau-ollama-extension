@@ -94,10 +94,10 @@
     <div class="form-group">
         <label for="model-select">モデル:</label>
         <select id="model-select">
-            <option value="llama2">Llama2</option>
-            <option value="mistral">Mistral</option>
-            <option value="phi">Phi</option>
-            <option value="gemma">Gemma</option>
+            <option value="phi4">phi4</option>
+            <option value="llama2">llama2</option>
+            <option value="mistral">mistral</option>
+            <option value="gemma">gemma</option>
         </select>
     </div>
     
@@ -125,6 +125,8 @@
         let sheet, dashboard;
         
         document.addEventListener('DOMContentLoaded', function() {
+            console.log('DOM Content Loaded');
+            
             // Tableau拡張機能の初期化
             tableau.extensions.initializeAsync().then(function() {
                 console.log('Tableau extension initialized');
@@ -152,7 +154,10 @@
             const ollamaUrl = document.getElementById('ollama-url').value.trim();
             try {
                 const response = await fetch(`${ollamaUrl}/api/tags`, {
-                    method: 'GET'
+                    method: 'GET',
+                    headers: {
+                        'Accept': 'application/json'
+                    }
                 });
                 
                 if (response.ok) {
@@ -172,6 +177,7 @@
                         });
                         showSuccess('Ollamaサーバーに接続できました');
                     } else {
+                        // デフォルトモデルを保持
                         showError('利用可能なモデルが見つかりません');
                     }
                 }
@@ -238,15 +244,21 @@
             
             // Ollamaへリクエストを送信
             try {
+                console.log('送信中:', { model: modelName, prompt: finalPrompt });
+                
                 const response = await fetch(`${ollamaUrl}/api/generate`, {
                     method: 'POST',
                     headers: {
-                        'Content-Type': 'application/json'
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json'
                     },
                     body: JSON.stringify({
                         model: modelName,
                         prompt: finalPrompt,
-                        stream: false
+                        stream: false,
+                        options: {
+                            temperature: 0.7
+                        }
                     })
                 });
                 
@@ -255,8 +267,15 @@
                 }
                 
                 const data = await response.json();
-                responseArea.textContent = data.response;
-                showSuccess('応答を受信しました');
+                console.log('受信データ:', data);
+                
+                if (data.response) {
+                    responseArea.textContent = data.response;
+                    showSuccess('応答を受信しました');
+                } else {
+                    responseArea.textContent = '応答が空です';
+                    showError('応答が空でした');
+                }
             } catch (error) {
                 console.error('Ollamaリクエストエラー:', error);
                 showError('エラーが発生しました: ' + error.message);
