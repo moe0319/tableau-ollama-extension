@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Simple Ollama Test</title>
+</head>
+<body>
+    <button onclick="testConnection()">接続テスト</button>
+    <div id="result"></div>
+    
+    <script>
+        function testConnection() {
+            document.getElementById('result').textContent = '接続テスト中...';
+            
+            var xhr = new XMLHttpRequest();
+            xhr.open('GET', 'http://localhost:11434', true);
+            
+            xhr.onload = function() {
+                if (xhr.status === 200) {
+                    document.getElementById('result').textContent = '接続成功: ' + xhr.responseText;
+                } else {
+                    document.getElementById('result').textContent = 'エラー: ' + xhr.status;
+                }
+            };
+            
+            xhr.onerror = function() {
+                document.getElementById('result').textContent = '接続エラーが発生しました';
+            };
+            
+            xhr.send();
+        }
+    </script>
+</body>
+</html>
