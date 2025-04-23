@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta http-equiv="Content-Security-Policy" content="default-src * 'unsafe-inline' 'unsafe-eval' data: blob:;">
+    <title>Ollama Tableau Integration</title>
+    
+    <!-- Tableau Extensions API -->
+    <script src="https://cdn.jsdelivr.net/npm/@tableau/extensions-api/lib/tableau.extensions.1.latest.min.js"></script>
+    
+    <style>
+        body {
+            font-family: 'Segoe UI', Arial, sans-serif;
+            padding: 15px;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        
+        .form-group {
+            margin-bottom: 15px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        
+        textarea, select, input {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        
+        button {
+            background-color: #2e77d0;
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        
+        #response-area {
+            min-height: 150px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 10px;
+            margin-top: 10px;
+            background-color: #f9f9f9;
+            white-space: pre-wrap;
+            font-family: monospace;
+        }
+        
+        .spinner {
+            display: none;
+            margin-left: 10px;
+            vertical-align: middle;
+        }
+        
+        .error {
+            color: #dc3545;
+            margin-top: 10px;
+        }
+        
+        .success {
+            color: #28a745;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <h2>Ollama Tableau 拡張機能</h2>
+    
+    <div class="form-group">
+        <label for="ollama-url">Ollama サーバーURL:</label>
+        <input type="text" id="ollama-url" value="http://localhost:11434" placeholder="http://localhost:11434">
+    </div>
+    
+    <div class="form-group">
+        <label for="model-select">モデル:</label>
+        <select id="model-select">
+            <option value="phi4">phi4</option>
+            <option value="llama2">llama2</option>
+            <option value="mistral">mistral</option>
+            <option value="gemma">gemma</option>
+        </select>
+    </div>
+    
+    <div class="form-group">
+        <label for="prompt-input">プロンプト:</label>
+        <textarea id="prompt-input" rows="4" placeholder="Ollamaに送信するプロンプトを入力してください..."></textarea>
+    </div>
+    
+    <div style="margin-bottom: 15px;">
+        <input type="checkbox" id="include-data" checked>
+        <label for="include-data" style="display: inline;">ダッシュボードのデータを含める</label>
+    </div>
+    
+    <button id="send-button">送信</button>
+    <span class="spinner" id="spinner">処理中...</span>
+    
+    <div id="status-message"></div>
+    
+    <div class="form-group" style="margin-top: 15px;">
+        <label for="response-area">Ollamaの応答:</label>
+        <div id="response-area"></div>
+    </div>
+    
+    <script>
+        let sheet, dashboard;
+        
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log('DOM Content Loaded');
+            
+            // Tableau拡張機能の初期化
+            if (typeof tableau !== 'undefined') {
+                tableau.extensions.initializeAsync().then(function() {
+                    console.log('Tableau extension initialized');
+                    
+                    dashboard = tableau.extensions.dashboardContent.dashboard;
+                    
+                    // 最初のワークシートを取得
+                    if (dashboard.worksheets.length > 0) {
+                        sheet = dashboard.worksheets[0];
+                    }
+                    
+                    setupEventListeners();
+                    // 接続テストは一旦スキップ
+                    showStatus('準備完了');
+                }).catch(function(err) {
+                    console.error('初期化エラー:', err);
+                    showError('Tableau拡張機能の初期化に失敗しました: ' + err);
+                });
+            } else {
+                setupEventListeners();
+            }
+        });
+        
+        function setupEventListeners() {
+            document.getElementById('send-button').addEventListener('click', sendPrompt);
+        }
+        
+        // プロンプトを送信する関数
+        async function sendPrompt() {
+            const ollamaUrl = document.getElementById('ollama-url').value.trim();
+            const modelName = document.getElementById('model-select').value;
+            const promptInput = document.getElementById('prompt-input').value.trim();
+            const includeData = document.getElementById('include-data').checked;
+            const responseArea = document.getElementById('response-area');
+            const spinner = document.getElementById('spinner');
+            const sendButton = document.getElementById('send-button');
+            
+            if (!promptInput) {
+                alert('プロンプトを入力してください');
+                return;
+            }
+            
+            // 送信中の表示
+            spinner.style.display = 'inline';
+            sendButton.disabled = true;
+            responseArea.textContent = '処理中...';
+            showStatus('リクエスト送信中...');
+            
+            // プロンプトを作成
+            let finalPrompt = promptInput;
+            
+            // Ollamaへリクエストを送信（XMLHttpRequestを使用）
+            try {
+                const xhr = new XMLHttpRequest();
+                xhr.open('POST', `${ollamaUrl}/api/generate`, true);
+                xhr.setRequestHeader('Content-Type', 'application/json');
+                
+                xhr.onload = function() {
+                    if (xhr.status === 200) {
+                        const data = JSON.parse(xhr.responseText);
+                        responseArea.textContent = data.response || 'レスポンスが空です';
+                        showSuccess('応答を受信しました');
+                    } else {
+                        showError(`エラー: HTTPステータス ${xhr.status}`);
+                        responseArea.textContent = '';
+                    }
+                    spinner.style.display = 'none';
+                    sendButton.disabled = false;
+                };
+                
+                xhr.onerror = function() {
+                    showError('接続エラーが発生しました');
+                    responseArea.textContent = '';
+                    spinner.style.display = 'none';
+                    sendButton.disabled = false;
+                };
+                
+                xhr.send(JSON.stringify({
+                    model: modelName,
+                    prompt: finalPrompt,
+                    stream: false
+                }));
+                
+            } catch (error) {
+                console.error('リクエストエラー:', error);
+                showError('エラーが発生しました: ' + error.message);
+                responseArea.textContent = '';
+                spinner.style.display = 'none';
+                sendButton.disabled = false;
+            }
+        }
+        
+        function showError(message) {
+            const statusMessage = document.getElementById('status-message');
+            statusMessage.textContent = message;
+            statusMessage.className = 'error';
+        }
+        
+        function showSuccess(message) {
+            const statusMessage = document.getElementById('status-message');
+            statusMessage.textContent = message;
+            statusMessage.className = 'success';
+        }
+        
+        function showStatus(message) {
+            const statusMessage = document.getElementById('status-message');
+            statusMessage.textContent = message;
+            statusMessage.className = '';
+        }
+    </script>
+</body>
+</html>
