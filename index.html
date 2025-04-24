@@ -89,6 +89,15 @@
             margin-top: 10px;
             font-family: monospace;
             font-size: 12px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        .tableau-info {
+            background-color: #e2f0fd;
+            border: 1px solid #b8daff;
+            border-radius: 4px;
+            padding: 10px;
+            margin-top: 10px;
         }
     </style>
 </head>
@@ -96,6 +105,14 @@
     <h2>Ollama Tableau 拡張機能</h2>
     <div class="warning">
         <strong>重要:</strong> CORS制限回避のため、プロキシサーバー(http://localhost:8889)を使用しています。
+    </div>
+
+    <!-- Tableau情報エリア追加 -->
+    <div id="tableau-info" class="tableau-info">
+        <div>Tableau API Version: <span id="tableau-version">不明</span></div>
+        <div>ダッシュボード名: <span id="dashboard-name">不明</span></div>
+        <div>検出シート数: <span id="sheets-count">0</span></div>
+        <button id="force-init" style="margin-top: 10px;">Tableau初期化を強制実行</button>
     </div>
 
     <!-- デバッグ情報エリア追加 -->
@@ -129,6 +146,7 @@
     <div class="form-group" id="sheet-select-group">
         <label for="sheet-select">使用するワークシート:</label>
         <select id="sheet-select"></select>
+        <button id="refresh-sheets" style="margin-top: 5px; background-color: #007bff;">ワークシート一覧を更新</button>
         <button id="refresh-data" style="margin-top: 5px; background-color: #6c757d;">データを更新</button>
     </div>
 
@@ -161,12 +179,37 @@
         let previewData = null;
         let currentFilters = [];
         let debugInfo = document.getElementById('debug-info');
+        let tableauInfo = {
+            version: document.getElementById('tableau-version'),
+            dashboardName: document.getElementById('dashboard-name'),
+            sheetsCount: document.getElementById('sheets-count')
+        };
 
         // デバッグ情報を更新する関数
         function updateDebugInfo(message) {
             const timestamp = new Date().toLocaleTimeString();
             debugInfo.innerHTML += `<br>${timestamp}: ${message}`;
+            // 常に最新の情報が見えるようにスクロール
+            debugInfo.scrollTop = debugInfo.scrollHeight;
             console.log(`DEBUG: ${message}`);
+        }
+
+        // Tableau情報を更新する関数
+        function updateTableauInfo() {
+            if (typeof tableau !== 'undefined' && tableau.extensions) {
+                try {
+                    tableauInfo.version.textContent = tableau.extensions.extensionVersion || '不明';
+                } catch (err) {
+                    tableauInfo.version.textContent = 'エラー: ' + err.message;
+                }
+
+                if (dashboard) {
+                    tableauInfo.dashboardName.textContent = dashboard.name || '不明';
+                    tableauInfo.sheetsCount.textContent = sheets.length || '0';
+                }
+            } else {
+                tableauInfo.version.textContent = 'Tableau API利用不可';
+            }
         }
 
         document.addEventListener('DOMContentLoaded', function () {
@@ -186,9 +229,23 @@
                     }
                 });
             }
+
+            // 強制初期化ボタンの設定
+            document.getElementById('force-init').addEventListener('click', forceInitializeTableau);
+            
+            // シート更新ボタン
+            document.getElementById('refresh-sheets').addEventListener('click', refreshWorksheets);
+            
+            initializeTableauExtension();
+            setupEventListeners();
+        });
+
+        function initializeTableauExtension() {
+            updateDebugInfo('Tableau拡張機能初期化を試行');
             
             if (typeof tableau !== 'undefined' && tableau.extensions) {
                 updateDebugInfo('Tableau Extensions API 検出');
+                updateTableauInfo();
                 
                 try {
                     // 10秒のタイムアウトを設定
@@ -205,39 +262,21 @@
                                 dashboard = tableau.extensions.dashboardContent.dashboard;
                                 updateDebugInfo(`ダッシュボード名: ${dashboard.name}`);
                                 
-                                // シートの取得方法を変更 - すべてのタイプを取得
-                                sheets = dashboard.worksheets.concat(
-                                    dashboard.objects
-                                        .filter(obj => obj.type === 'worksheet')
-                                        .map(obj => obj.worksheet)
-                                ).filter(Boolean);
-                                
-                                updateDebugInfo(`検出されたシート数: ${sheets.length}`);
-                                if (sheets.length > 0) {
-                                    updateDebugInfo(`シート名一覧: ${sheets.map(s => s.name).join(', ')}`);
-                                    populateSheetSelector();
-                                    await updateSelectedSheet();
-                                    await fetchFiltersInfo();
-                                    await refreshDataPreview();
-                                } else {
-                                    updateDebugInfo('シートが見つかりません');
-                                    showError('このダッシュボードにはワークシートがありません');
-                                }
+                                await refreshWorksheets();
+                                testOllamaConnection();
                             } catch (innerErr) {
                                 updateDebugInfo(`内部エラー: ${innerErr.message}`);
                                 console.error('内部エラー:', innerErr);
                                 showError('内部エラーが発生しました: ' + innerErr.message);
                             }
                             
-                            setupEventListeners();
-                            testOllamaConnection();
+                            updateTableauInfo();
                         }).catch(function (err) {
                             updateDebugInfo(`初期化エラー: ${err.message}`);
                             console.error('初期化エラー:', err);
                             showError('Tableau拡張機能の初期化に失敗しました: ' + err.message);
                             
                             // 初期化に失敗した場合でも他の機能を有効にする
-                            setupEventListeners();
                             document.getElementById('sheet-select-group').style.display = 'none';
                             document.getElementById('preview-group').style.display = 'none';
                             document.querySelector('.collapsible').style.display = 'none';
@@ -252,13 +291,120 @@
             } else {
                 updateDebugInfo('Tableau API が利用できません - おそらくTableau環境外で実行されています');
                 console.log('Running outside Tableau or Tableau API not available');
-                setupEventListeners();
                 document.getElementById('sheet-select-group').style.display = 'none';
                 document.getElementById('preview-group').style.display = 'none';
                 document.getElementById('filters-info').innerHTML = '<p>Tableau環境外で実行中のため、フィルター情報はありません</p>';
                 testOllamaConnection();
             }
-        });
+        }
+
+        // 強制的に再初期化を行う関数
+        async function forceInitializeTableau() {
+            updateDebugInfo('Tableau拡張機能の強制初期化を試行');
+            
+            if (typeof tableau === 'undefined' || !tableau.extensions) {
+                updateDebugInfo('Tableau API が利用できないため、強制初期化できません');
+                showError('Tableau API が利用できないため、強制初期化できません');
+                return;
+            }
+            
+            try {
+                updateDebugInfo('初期化中...');
+                await tableau.extensions.initializeAsync();
+                updateDebugInfo('強制初期化成功');
+                
+                dashboard = tableau.extensions.dashboardContent.dashboard;
+                updateDebugInfo(`ダッシュボード名: ${dashboard.name}`);
+                
+                await refreshWorksheets();
+                updateTableauInfo();
+                showSuccess('Tableau拡張機能の初期化に成功しました');
+            } catch (err) {
+                updateDebugInfo(`強制初期化エラー: ${err.message}`);
+                console.error('強制初期化エラー:', err);
+                showError('強制初期化に失敗しました: ' + err.message);
+            }
+        }
+
+        // ワークシート一覧を更新する関数
+        async function refreshWorksheets() {
+            updateDebugInfo('ワークシート一覧を更新中...');
+            
+            if (!dashboard) {
+                try {
+                    dashboard = tableau.extensions.dashboardContent.dashboard;
+                } catch (err) {
+                    updateDebugInfo(`ダッシュボード取得エラー: ${err.message}`);
+                    showError('ダッシュボードを取得できません: ' + err.message);
+                    return;
+                }
+            }
+            
+            try {
+                // すべてのタイプのシートを取得
+                updateDebugInfo('ワークシート取得中...');
+                
+                // Dashboard Worksheets
+                let worksheets = dashboard.worksheets || [];
+                updateDebugInfo(`通常のワークシート数: ${worksheets.length}`);
+                
+                // Objects that contain worksheets
+                let objectWorksheets = [];
+                try {
+                    if (dashboard.objects && dashboard.objects.length > 0) {
+                        objectWorksheets = dashboard.objects
+                            .filter(obj => obj.type === 'worksheet' && obj.worksheet)
+                            .map(obj => obj.worksheet);
+                        updateDebugInfo(`オブジェクト内ワークシート数: ${objectWorksheets.length}`);
+                    }
+                } catch (objErr) {
+                    updateDebugInfo(`オブジェクト内ワークシート取得エラー: ${objErr.message}`);
+                }
+                
+                // Additional worksheets from other sources
+                let additionalWorksheets = [];
+                try {
+                    // Publish actions を持つワークシートを取得
+                    if (dashboard.publishedSheets && dashboard.publishedSheets.length > 0) {
+                        additionalWorksheets = dashboard.publishedSheets
+                            .filter(sheet => sheet && sheet.name)
+                            .map(sheet => sheet);
+                        updateDebugInfo(`発行済みワークシート数: ${additionalWorksheets.length}`);
+                    }
+                } catch (addErr) {
+                    updateDebugInfo(`追加ワークシート取得エラー: ${addErr.message}`);
+                }
+                
+                // All sheets combined and deduplicated by name
+                let allSheets = [...worksheets, ...objectWorksheets, ...additionalWorksheets];
+                const sheetNames = new Set();
+                sheets = allSheets.filter(sheet => {
+                    if (!sheet || !sheet.name) return false;
+                    if (sheetNames.has(sheet.name)) return false;
+                    sheetNames.add(sheet.name);
+                    return true;
+                });
+                
+                updateDebugInfo(`最終的なシート数: ${sheets.length}`);
+                
+                if (sheets.length > 0) {
+                    updateDebugInfo(`シート名一覧: ${sheets.map(s => s.name).join(', ')}`);
+                    populateSheetSelector();
+                    await updateSelectedSheet();
+                    await fetchFiltersInfo();
+                    await refreshDataPreview();
+                } else {
+                    updateDebugInfo('利用可能なシートがありません');
+                    showError('このダッシュボードには使用可能なワークシートがありません');
+                }
+                
+                updateTableauInfo();
+            } catch (err) {
+                updateDebugInfo(`ワークシート一覧更新エラー: ${err.message}`);
+                console.error('ワークシート一覧更新エラー:', err);
+                showError('ワークシート一覧の更新に失敗しました: ' + err.message);
+            }
+        }
 
         function setupEventListeners() {
             updateDebugInfo('イベントリスナーを設定');
@@ -511,189 +657,245 @@
         }
 
         async function testOllamaConnection() {
-            const ollamaUrl = document.getElementById('ollama-url').value.trim();
-            updateDebugInfo(`Ollama接続テスト: ${ollamaUrl}`);
+    const ollamaUrl = document.getElementById('ollama-url').value.trim();
+    updateDebugInfo(`Ollama接続テスト: ${ollamaUrl}`);
+    
+    try {
+        const response = await fetch(ollamaUrl, {
+            method: 'GET'
+        });
+        
+        if (response.ok) {
+            updateDebugInfo('Ollama接続成功');
+            showSuccess('Ollamaサーバーに接続できました');
             
+            // モデル一覧を取得
             try {
-                const response = await fetch(ollamaUrl, {
+                const tagsResponse = await fetch(`${ollamaUrl}/api/tags`, {
                     method: 'GET'
                 });
                 
-                if (response.ok) {
-                    updateDebugInfo('Ollama接続成功');
-                    showSuccess('Ollamaサーバーに接続できました');
-                    
-                    // モデル一覧を取得
-                    try {
-                        const tagsResponse = await fetch(`${ollamaUrl}/api/tags`, {
-                            method: 'GET'
-                        });
-                        
-                        if (tagsResponse.ok) {
-                            const tagsData = await tagsResponse.json();
-                            updateModelSelector(tagsData);
-                            updateDebugInfo(`モデル一覧取得成功: ${tagsData.models ? tagsData.models.length : 0}個のモデル`);
-                        }
-                    } catch (tagsError) {
-                        updateDebugInfo(`モデル一覧取得エラー: ${tagsError.message}`);
-                        console.log('モデル一覧の取得に失敗しました:', tagsError);
-                        // モデル一覧取得失敗は致命的でないのでエラー表示はしない
-                    }
-                } else {
-                    updateDebugInfo(`Ollama応答エラー: ${response.status}`);
-                    showError('Ollamaサーバーの応答エラー: ' + response.status);
+                if (tagsResponse.ok) {
+                    const tagsData = await tagsResponse.json();
+                    updateModelSelector(tagsData);
+                    updateDebugInfo(`モデル一覧取得成功: ${tagsData.models ? tagsData.models.length : 0}個のモデル`);
                 }
-            } catch (error) {
-                updateDebugInfo(`Ollama接続エラー: ${error.message}`);
-                console.error('接続テストエラー:', error);
-                showError('Ollamaサーバーに接続できません: ' + error.message);
+            } catch (tagsError) {
+                updateDebugInfo(`モデル一覧取得エラー: ${tagsError.message}`);
+                console.log('モデル一覧の取得に失敗しました:', tagsError);
+                // モデル一覧取得失敗は致命的でないのでエラー表示はしない
             }
+        } else {
+            updateDebugInfo(`Ollama応答エラー: ${response.status}`);
+            showError('Ollamaサーバーの応答エラー: ' + response.status);
         }
-        
-        function updateModelSelector(tagsData) {
-            if (!tagsData || !tagsData.models || tagsData.models.length === 0) {
-                updateDebugInfo('利用可能なモデルがありません');
-                return;
-            }
-            
-            const modelSelect = document.getElementById('model-select');
-            modelSelect.innerHTML = '';
-            
-            tagsData.models.forEach(model => {
-                const option = document.createElement('option');
-                option.value = model.name;
-                option.textContent = model.name;
-                modelSelect.appendChild(option);
-                updateDebugInfo(`モデルをセレクターに追加: ${model.name}`);
-            });
-        }
+    } catch (error) {
+        updateDebugInfo(`Ollama接続エラー: ${error.message}`);
+        console.error('接続テストエラー:', error);
+        showError('Ollamaサーバーに接続できません: ' + error.message);
+    }
+}
 
-        async function sendPrompt() {
-            const ollamaUrl = document.getElementById('ollama-url').value.trim();
-            const modelName = document.getElementById('model-select').value;
-            const promptInput = document.getElementById('prompt-input').value.trim();
-            const includeData = document.getElementById('include-data').checked;
-            const responseArea = document.getElementById('response-area');
-            const spinner = document.getElementById('spinner');
-            const sendButton = document.getElementById('send-button');
+function updateModelSelector(tagsData) {
+    if (!tagsData || !tagsData.models || tagsData.models.length === 0) {
+        updateDebugInfo('利用可能なモデルがありません');
+        return;
+    }
+    
+    const modelSelect = document.getElementById('model-select');
+    modelSelect.innerHTML = '';
+    
+    tagsData.models.forEach(model => {
+        const option = document.createElement('option');
+        option.value = model.name;
+        option.textContent = model.name;
+        modelSelect.appendChild(option);
+        updateDebugInfo(`モデルをセレクターに追加: ${model.name}`);
+    });
+}
+
+async function sendPrompt() {
+    const ollamaUrl = document.getElementById('ollama-url').value.trim();
+    const modelName = document.getElementById('model-select').value;
+    const promptInput = document.getElementById('prompt-input').value.trim();
+    const includeData = document.getElementById('include-data').checked;
+    const responseArea = document.getElementById('response-area');
+    const spinner = document.getElementById('spinner');
+    const sendButton = document.getElementById('send-button');
+    
+    if (!promptInput) {
+        alert('プロンプトを入力してください');
+        return;
+    }
+    
+    // 送信中の表示
+    spinner.style.display = 'inline';
+    sendButton.disabled = true;
+    responseArea.textContent = '処理中...';
+    showStatus('リクエスト送信中...');
+    updateDebugInfo(`プロンプト送信: モデル=${modelName}, データ含む=${includeData}`);
+    
+    // プロンプトを作成
+    let finalPrompt = promptInput;
+    
+    if (includeData && currentSheet && previewData) {
+        try {
+            // プレビューデータを文字列に変換
+            let tableText = '';
             
-            if (!promptInput) {
-                alert('プロンプトを入力してください');
-                return;
-            }
+            // ヘッダー行
+            const headers = previewData.columns.map(col => col.fieldName);
+            tableText += headers.join('\t') + '\n';
             
-            // 送信中の表示
-            spinner.style.display = 'inline';
-            sendButton.disabled = true;
-            responseArea.textContent = '処理中...';
-            showStatus('リクエスト送信中...');
-            updateDebugInfo(`プロンプト送信: モデル=${modelName}, データ含む=${includeData}`);
-            
-            // プロンプトを作成
-            let finalPrompt = promptInput;
-            
-            if (includeData && currentSheet && previewData) {
-                try {
-                    // プレビューデータを文字列に変換
-                    let tableText = '';
-                    
-                    // ヘッダー行
-                    const headers = previewData.columns.map(col => col.fieldName);
-                    tableText += headers.join('\t') + '\n';
-                    
-                    // データ行
-                    for (let i = 0; i < previewData.data.length; i++) {
-                        const row = previewData.data[i];
-                        const rowValues = [];
-                        
-                        for (let j = 0; j < row.length; j++) {
-                            rowValues.push(row[j].formattedValue || row[j].value || '');
-                        }
-                        
-                        tableText += rowValues.join('\t') + '\n';
-                    }
-                    
-                    // フィルター情報を追加
-                    let filtersText = '';
-                    if (currentFilters && currentFilters.length > 0) {
-                        filtersText = '\n適用中のフィルター:\n';
-                        currentFilters.forEach(function(filter) {
-                            filtersText += `- ${filter.fieldName} (${filter.filterType}): ${getFilterValues(filter)}\n`;
-                        });
-                    }
-                    
-                    // プロンプトにデータとフィルター情報を追加
-                    finalPrompt = `以下のTableauデータを分析して回答してください:${filtersText}\n${tableText}\n\n${promptInput}`;
-                    updateDebugInfo('データとフィルター情報を含むプロンプトを作成しました');
-                } catch (error) {
-                    updateDebugInfo(`データ変換エラー: ${error.message}`);
-                    console.error('データ変換エラー:', error);
-                    showError('データの変換に失敗しました: ' + error.message);
-                    spinner.style.display = 'none';
-                    sendButton.disabled = false;
-                    return;
-                }
-            }
-            
-            // Ollamaへリクエストを送信
-            try {
-                updateDebugInfo(`Ollamaにリクエスト送信中: ${ollamaUrl}`);
+            // データ行
+            for (let i = 0; i < previewData.data.length; i++) {
+                const row = previewData.data[i];
+                const rowValues = [];
                 
-                const response = await fetch(`${ollamaUrl}/api/generate`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        model: modelName,
-                        prompt: finalPrompt,
-                        stream: false
-                    })
+                for (let j = 0; j < row.length; j++) {
+                    rowValues.push(row[j].formattedValue || row[j].value || '');
+                }
+                
+                tableText += rowValues.join('\t') + '\n';
+            }
+            
+            // フィルター情報を追加
+            let filtersText = '';
+            if (currentFilters && currentFilters.length > 0) {
+                filtersText = '\n適用中のフィルター:\n';
+                currentFilters.forEach(function(filter) {
+                    filtersText += `- ${filter.fieldName} (${filter.filterType}): ${getFilterValues(filter)}\n`;
                 });
-                
-                if (!response.ok) {
-                    throw new Error(`HTTP error! Status: ${response.status}`);
-                }
-                
-                const data = await response.json();
-                updateDebugInfo('レスポンス受信');
-                
-                if (data && data.response) {
-                    responseArea.textContent = data.response;
-                    showSuccess('応答を受信しました');
-                } else {
-                    responseArea.textContent = 'レスポンスが空か不正な形式です';
-                    showError('不正なレスポンス形式');
-                }
-            } catch (error) {
-                updateDebugInfo(`Ollamaリクエストエラー: ${error.message}`);
-                console.error('Ollamaリクエストエラー:', error);
-                showError('エラーが発生しました: ' + error.message);
-                responseArea.textContent = '';
-            } finally {
-                spinner.style.display = 'none';
-                sendButton.disabled = false;
             }
+            
+            // プロンプトにデータとフィルター情報を追加
+            finalPrompt = `以下のTableauデータを分析して回答してください:${filtersText}\n${tableText}\n\n${promptInput}`;
+            updateDebugInfo('データとフィルター情報を含むプロンプトを作成しました');
+        } catch (error) {
+            updateDebugInfo(`データ変換エラー: ${error.message}`);
+            console.error('データ変換エラー:', error);
+            showError('データの変換に失敗しました: ' + error.message);
+            spinner.style.display = 'none';
+            sendButton.disabled = false;
+            return;
         }
+    }
+    
+    // Ollamaへリクエストを送信
+    try {
+        updateDebugInfo(`Ollamaにリクエスト送信中: ${ollamaUrl}`);
+        
+        const response = await fetch(`${ollamaUrl}/api/generate`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                model: modelName,
+                prompt: finalPrompt,
+                stream: false
+            })
+        });
+        
+        if (!response.ok) {
+            throw new Error(`HTTP error! Status: ${response.status}`);
+        }
+        
+        const data = await response.json();
+        updateDebugInfo('レスポンス受信');
+        
+        if (data && data.response) {
+            responseArea.textContent = data.response;
+            showSuccess('応答を受信しました');
+        } else {
+            responseArea.textContent = 'レスポンスが空か不正な形式です';
+            showError('不正なレスポンス形式');
+        }
+    } catch (error) {
+        updateDebugInfo(`Ollamaリクエストエラー: ${error.message}`);
+        console.error('Ollamaリクエストエラー:', error);
+        showError('エラーが発生しました: ' + error.message);
+        responseArea.textContent = '';
+    } finally {
+        spinner.style.display = 'none';
+        sendButton.disabled = false;
+    }
+}
 
-        function showError(message) {
-            const statusMessage = document.getElementById('status-message');
-            statusMessage.textContent = message;
-            statusMessage.className = '';
-            updateDebugInfo(`ステータス: ${message}`);
-        }
-    </script>
-</body>
-</html>.getElementById('status-message');
-            statusMessage.textContent = message;
-            statusMessage.className = 'error';
-            updateDebugInfo(`エラー: ${message}`);
-        }
+function showError(message) {
+    const statusMessage = document.getElementById('status-message');
+    statusMessage.textContent = message;
+    statusMessage.className = 'error';
+    updateDebugInfo(`エラー: ${message}`);
+}
+
+function showSuccess(message) {
+    const statusMessage = document.getElementById('status-message');
+    statusMessage.textContent = message;
+    statusMessage.className = 'success';
+    updateDebugInfo(`成功: ${message}`);
+}
+
+function showStatus(message) {
+    const statusMessage = document.getElementById('status-message');
+    statusMessage.textContent = message;
+    statusMessage.className = '';
+    updateDebugInfo(`ステータス: ${message}`);
+}
+
+// Tablueバージョン情報を定期的に更新
+setInterval(function() {
+    if (typeof tableau !== 'undefined' && tableau.extensions) {
+        updateTableauInfo();
+    }
+}, 5000);
+
+// 初期化状態をより詳しく表示
+window.addEventListener('error', function(event) {
+    updateDebugInfo(`グローバルエラー: ${event.message} at ${event.filename}:${event.lineno}`);
+});
+
+// Tableau API のバージョンとサポート状況を確認
+function checkTableauVersion() {
+    updateDebugInfo('Tableau APIバージョンチェック');
+    
+    if (typeof tableau === 'undefined') {
+        updateDebugInfo('Tableau API未定義');
+        return false;
+    }
+    
+    if (!tableau.extensions) {
+        updateDebugInfo('Tableau Extensions API未定義');
+        return false;
+    }
+    
+    try {
+        const version = tableau.extensions.extensionVersion || '不明';
+        updateDebugInfo(`Tableau Extensions API バージョン: ${version}`);
+        return true;
+    } catch (err) {
+        updateDebugInfo(`バージョン取得エラー: ${err.message}`);
+        return false;
+    }
+}
+
+// コンソールログを拡張してデバッグ情報を追加
+const originalConsoleLog = console.log;
+console.log = function() {
+    // 元のログ機能を呼び出し
+    originalConsoleLog.apply(console, arguments);
+    
+    // デバッグエリアにも追加
+    try {
+        const args = Array.from(arguments).map(arg => {
+            if (typeof arg === 'object') {
+                return JSON.stringify(arg);
+            }
+            return String(arg);
+        });
         
-        function showSuccess(message) {
-            const statusMessage = document.getElementById('status-message');
-            statusMessage.textContent = message;
-            statusMessage.className = 'success';
-            updateDebugInfo(`成功: ${message}`);
-        }
-        
+        updateDebugInfo(`Console: ${args.join(' ')}`);
+    } catch (err) {
+        // エラーが発生した場合は元のログのみ残す
+    }
+};
