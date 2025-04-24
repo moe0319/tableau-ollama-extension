@@ -2,297 +2,52 @@
 <html>
 <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Tableau ワークシート情報取得テスト</title>
-
-    <!-- Tableau Extensions API -->
+    <title>超シンプルなTableauテスト</title>
     <script src="https://cdn.jsdelivr.net/npm/@tableau/extensions-api/lib/tableau.extensions.1.latest.min.js"></script>
-
-    <style>
-        body {
-            font-family: 'Segoe UI', Arial, sans-serif;
-            padding: 15px;
-            max-width: 800px;
-            margin: 0 auto;
-        }
-        .info-box {
-            margin: 10px 0;
-            padding: 10px;
-            background-color: #f0f0f0;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-        }
-        .success { color: green; }
-        .error { color: red; }
-        .warning { color: orange; }
-        button {
-            background-color: #2e77d0;
-            color: white;
-            border: none;
-            padding: 8px 15px;
-            border-radius: 4px;
-            cursor: pointer;
-            margin: 5px;
-        }
-        button:disabled {
-            background-color: #cccccc;
-        }
-        #log-area {
-            height: 200px;
-            overflow-y: auto;
-            border: 1px solid #ccc;
-            padding: 10px;
-            font-family: monospace;
-            margin-top: 10px;
-            background-color: #f9f9f9;
-        }
-    </style>
 </head>
 <body>
-    <h1>Tableau ワークシート情報取得テスト</h1>
-    
-    <div class="info-box">
-        <p>このツールはTableauダッシュボードから利用可能なワークシート情報を取得し表示します。</p>
-    </div>
-
-    <div>
-        <button id="init-button">初期化</button>
-        <button id="get-worksheets-button">ワークシート取得</button>
-        <button id="get-data-button" disabled>シートデータ取得</button>
-    </div>
-
-    <div class="info-box">
-        <h3>ステータス</h3>
-        <div id="status">未初期化</div>
-    </div>
-
-    <div class="info-box">
-        <h3>ワークシート一覧</h3>
-        <div id="worksheets-list">なし</div>
-    </div>
-
-    <div class="info-box">
-        <h3>選択されたワークシート</h3>
-        <select id="worksheet-selector" disabled>
-            <option value="">選択してください</option>
-        </select>
-    </div>
-
-    <div class="info-box">
-        <h3>シートデータ（最初の5行）</h3>
-        <div id="sheet-data">なし</div>
-    </div>
-
-    <div class="info-box">
-        <h3>ログ</h3>
-        <div id="log-area"></div>
-    </div>
+    <h1>Tableau API テスト</h1>
+    <div id="status">ステータス: 未初期化</div>
+    <button id="init-button">初期化</button>
+    <div id="result">結果がここに表示されます</div>
 
     <script>
-        // グローバル変数
-        let dashboard = null;
-        let worksheets = [];
-        let selectedWorksheet = null;
-
-        // ユーティリティ関数
-        function logMessage(message, type = 'info') {
-            const logArea = document.getElementById('log-area');
-            const timestamp = new Date().toLocaleTimeString();
-            const entry = document.createElement('div');
-            entry.className = type;
-            entry.textContent = `[${timestamp}] ${message}`;
-            logArea.appendChild(entry);
-            logArea.scrollTop = logArea.scrollHeight;
-            console.log(`[${type}] ${message}`);
-        }
-
-        function updateStatus(message, type = 'info') {
-            const status = document.getElementById('status');
-            status.textContent = message;
-            status.className = type;
-            logMessage(message, type);
-        }
-
-        // 拡張機能の初期化
-        function initializeExtension() {
-            updateStatus('初期化中...', 'warning');
+        document.getElementById('init-button').addEventListener('click', function() {
+            const statusDiv = document.getElementById('status');
+            const resultDiv = document.getElementById('result');
             
-            // まずTableau拡張機能APIが利用可能かチェック
-            if (typeof tableau === 'undefined' || !tableau.extensions) {
-                updateStatus('Tableau Extensions APIが利用できません', 'error');
+            statusDiv.textContent = 'ステータス: 初期化試行中...';
+            
+            // Tableau オブジェクトが存在するかチェック
+            if (typeof tableau === 'undefined') {
+                statusDiv.textContent = 'ステータス: エラー - tableauオブジェクトが見つかりません';
+                return;
+            }
+            
+            // Extensions APIが存在するかチェック
+            if (!tableau.extensions) {
+                statusDiv.textContent = 'ステータス: エラー - tableau.extensionsが見つかりません';
                 return;
             }
             
             // 初期化実行
-            tableau.extensions.initializeAsync()
-                .then(() => {
-                    // 初期化成功
-                    updateStatus('初期化完了', 'success');
-                    dashboard = tableau.extensions.dashboardContent.dashboard;
-                    logMessage(`ダッシュボード「${dashboard.name}」に接続しました`);
-                    
-                    // ワークシート取得ボタンを有効化
-                    document.getElementById('get-worksheets-button').disabled = false;
-                })
-                .catch(error => {
-                    // 初期化失敗
-                    updateStatus(`初期化失敗: ${error.message}`, 'error');
-                    logMessage(`エラー詳細: ${JSON.stringify(error)}`, 'error');
-                });
-        }
-
-        // ワークシート一覧を取得
-        function getWorksheets() {
-            if (!dashboard) {
-                updateStatus('ダッシュボードが初期化されていません', 'error');
-                return;
-            }
-            
-            try {
-                worksheets = dashboard.worksheets;
-                logMessage(`${worksheets.length}個のワークシートを見つけました`);
+            tableau.extensions.initializeAsync().then(function() {
+                statusDiv.textContent = 'ステータス: 初期化成功!';
                 
-                // ワークシート一覧を表示
-                const worksheetsList = document.getElementById('worksheets-list');
-                if (worksheets.length === 0) {
-                    worksheetsList.textContent = 'ワークシートが見つかりませんでした';
-                    return;
-                }
+                // ダッシュボード情報を取得
+                const dashboard = tableau.extensions.dashboardContent.dashboard;
+                const worksheets = dashboard.worksheets;
                 
-                // リスト表示を作成
-                worksheetsList.innerHTML = '';
-                const ul = document.createElement('ul');
-                worksheets.forEach((sheet, index) => {
-                    const li = document.createElement('li');
-                    li.textContent = `${index + 1}: ${sheet.name}`;
-                    ul.appendChild(li);
-                    
-                    // ログにも出力
-                    logMessage(`ワークシート: ${sheet.name}`);
-                });
-                worksheetsList.appendChild(ul);
-                
-                // セレクタを更新
-                const selector = document.getElementById('worksheet-selector');
-                selector.innerHTML = '<option value="">選択してください</option>';
-                worksheets.forEach((sheet, index) => {
-                    const option = document.createElement('option');
-                    option.value = index;
-                    option.textContent = sheet.name;
-                    selector.appendChild(option);
-                });
-                
-                // セレクタとデータ取得ボタンを有効化
-                selector.disabled = false;
-                document.getElementById('get-data-button').disabled = false;
-                
-                updateStatus('ワークシート一覧取得完了', 'success');
-            } catch (error) {
-                updateStatus(`ワークシート取得エラー: ${error.message}`, 'error');
-                logMessage(`エラー詳細: ${JSON.stringify(error)}`, 'error');
-            }
-        }
-
-        // 選択されたワークシートからデータを取得
-        async function getSheetData() {
-            const selector = document.getElementById('worksheet-selector');
-            const selectedIndex = parseInt(selector.value);
-            
-            if (isNaN(selectedIndex) || selectedIndex < 0 || selectedIndex >= worksheets.length) {
-                updateStatus('有効なワークシートを選択してください', 'warning');
-                return;
-            }
-            
-            selectedWorksheet = worksheets[selectedIndex];
-            updateStatus(`「${selectedWorksheet.name}」からデータを取得中...`, 'warning');
-            
-            try {
-                // データ取得を試みる（まずignoreSelectionでトライ）
-                let data;
-                try {
-                    logMessage(`getSummaryDataAsync({ignoreSelection: true})を試行中...`);
-                    data = await selectedWorksheet.getSummaryDataAsync({ignoreSelection: true});
-                } catch (innerError) {
-                    logMessage(`ignoreSelectionエラー: ${innerError.message}. 通常モードで再試行します...`, 'warning');
-                    // 通常モードで再試行
-                    data = await selectedWorksheet.getSummaryDataAsync();
-                }
-                
-                // データ取得成功
-                logMessage(`データ取得成功: ${data.columns.length}列, ${data.data.length}行`);
-                
-                // 列名を表示
-                const columnNames = data.columns.map(col => col.fieldName);
-                logMessage(`列名: ${columnNames.join(', ')}`);
-                
-                // データの最初の5行を表示
-                const sheetData = document.getElementById('sheet-data');
-                if (data.data.length === 0) {
-                    sheetData.textContent = 'データがありません';
-                    return;
-                }
-                
-                // テーブル作成
-                sheetData.innerHTML = '';
-                const table = document.createElement('table');
-                table.style.width = '100%';
-                table.style.borderCollapse = 'collapse';
-                
-                // ヘッダー行
-                const thead = document.createElement('thead');
-                const headerRow = document.createElement('tr');
-                data.columns.forEach(col => {
-                    const th = document.createElement('th');
-                    th.textContent = col.fieldName;
-                    th.style.border = '1px solid #ddd';
-                    th.style.padding = '8px';
-                    th.style.backgroundColor = '#f2f2f2';
-                    headerRow.appendChild(th);
-                });
-                thead.appendChild(headerRow);
-                table.appendChild(thead);
-                
-                // データ行（最大5行）
-                const tbody = document.createElement('tbody');
-                for (let i = 0; i < Math.min(5, data.data.length); i++) {
-                    const tr = document.createElement('tr');
-                    for (let j = 0; j < data.data[i].length; j++) {
-                        const td = document.createElement('td');
-                        td.textContent = data.data[i][j].formattedValue || data.data[i][j].value || '';
-                        td.style.border = '1px solid #ddd';
-                        td.style.padding = '8px';
-                        tr.appendChild(td);
-                    }
-                    tbody.appendChild(tr);
-                }
-                table.appendChild(tbody);
-                sheetData.appendChild(table);
-                
-                updateStatus(`「${selectedWorksheet.name}」のデータを取得しました`, 'success');
-            } catch (error) {
-                updateStatus(`データ取得エラー: ${error.message}`, 'error');
-                logMessage(`エラー詳細: ${JSON.stringify(error)}`, 'error');
-            }
-        }
-
-        // イベントリスナーを設定
-        document.addEventListener('DOMContentLoaded', function() {
-            // ボタンのイベントリスナー
-            document.getElementById('init-button').addEventListener('click', initializeExtension);
-            document.getElementById('get-worksheets-button').addEventListener('click', getWorksheets);
-            document.getElementById('get-data-button').addEventListener('click', getSheetData);
-            
-            // セレクタのイベントリスナー
-            document.getElementById('worksheet-selector').addEventListener('change', function() {
-                const index = this.value;
-                if (index !== '') {
-                    logMessage(`ワークシート「${worksheets[index].name}」が選択されました`);
-                }
+                resultDiv.innerHTML = `
+                    <p>ダッシュボード名: ${dashboard.name}</p>
+                    <p>ワークシート数: ${worksheets.length}</p>
+                    <ul>
+                        ${worksheets.map(sheet => `<li>${sheet.name}</li>`).join('')}
+                    </ul>
+                `;
+            }).catch(function(err) {
+                statusDiv.textContent = 'ステータス: 初期化エラー - ' + err.message;
             });
-            
-            // 初期ステータスを設定
-            updateStatus('準備完了。「初期化」ボタンをクリックしてください。');
-            logMessage('アプリケーションが読み込まれました。「初期化」ボタンをクリックしてTableauに接続してください。');
         });
     </script>
 </body>
