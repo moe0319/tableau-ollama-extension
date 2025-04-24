@@ -6,6 +6,8 @@
     <title>Ollama Tableau Integration</title>
 
     <script src="https://cdn.jsdelivr.net/npm/@tableau/extensions-api/lib/tableau.extensions.1.latest.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js"></script>
 
     <style>
         body {
@@ -34,89 +36,29 @@
             background-color: #fff3cd; border: 1px solid #ffeeba; color: #856404;
             padding: 10px; margin-bottom: 15px; border-radius: 4px;
         }
-        .data-table {
-            border-collapse: collapse;
-            width: 100%;
-            margin-top: 10px;
-            font-size: 0.8em;
-        }
-        .data-table th, .data-table td {
-            border: 1px solid #ddd;
-            padding: 4px;
-            text-align: left;
-        }
-        .data-table th {
-            background-color: #f2f2f2;
-        }
-        .filters-info {
-            margin-top: 10px;
-            font-size: 0.8em;
-            background-color: #e9f5ff;
-            border: 1px solid #b8daff;
-            padding: 8px;
-            border-radius: 4px;
-        }
-        .collapsible {
-            background-color: #f1f1f1;
-            color: #444;
-            cursor: pointer;
+        .sheet-selector {
+            margin-bottom: 10px;
             padding: 10px;
-            width: 100%;
-            border: none;
-            text-align: left;
-            outline: none;
-            font-size: 14px;
-            margin-top: 10px;
-            border-radius: 4px;
-        }
-        .active, .collapsible:hover {
-            background-color: #e0e0e0;
-        }
-        .content {
-            padding: 0 10px;
-            max-height: 0;
-            overflow: hidden;
-            transition: max-height 0.2s ease-out;
-            background-color: #f9f9f9;
-            border-radius: 0 0 4px 4px;
-        }
-        /* デバッグ用スタイル追加 */
-        .debug-info {
-            background-color: #f8f9fa;
             border: 1px solid #ddd;
             border-radius: 4px;
-            padding: 10px;
-            margin-top: 10px;
-            font-family: monospace;
-            font-size: 12px;
-            max-height: 200px;
-            overflow-y: auto;
         }
-        .tableau-info {
-            background-color: #e2f0fd;
-            border: 1px solid #b8daff;
-            border-radius: 4px;
-            padding: 10px;
-            margin-top: 10px;
+        .sheet-selector input[type="checkbox"] {
+            margin-right: 5px;
+        }
+        .column-selector {
+            margin-top: 5px;
+            margin-left: 20px;
+            padding: 5px;
+            border-left: 1px solid #ddd;
+            display: none;
         }
     </style>
 </head>
 <body>
     <h2>Ollama Tableau 拡張機能</h2>
     <div class="warning">
-        <strong>重要:</strong> CORS制限回避のため、プロキシサーバー(http://localhost:8889)を使用しています。
+        <strong>重要:</strong> CORS制限回避のため、CORS拡張機能を使うかEdgeを特別モード(--disable-web-security)で起動してください。
     </div>
-
-    <!-- Tableau情報エリア追加 -->
-    <div id="tableau-info" class="tableau-info">
-        <div>Tableau API Version: <span id="tableau-version">不明</span></div>
-        <div>ダッシュボード名: <span id="dashboard-name">不明</span></div>
-        <div>検出シート数: <span id="sheets-count">0</span></div>
-        <button id="force-init" style="margin-top: 10px;">Tableau初期化を強制実行</button>
-    </div>
-
-    <!-- デバッグ情報エリア追加 -->
-    <div id="debug-info" class="debug-info">初期化ステータス: 待機中...</div>
 
     <div class="form-group">
         <label for="ollama-url">Ollama サーバーURL:</label>
@@ -143,759 +85,388 @@
         <label for="include-data" style="display: inline;">ダッシュボードのデータを含める</label>
     </div>
 
-    <div class="form-group" id="sheet-select-group">
-        <label for="sheet-select">使用するワークシート:</label>
-        <select id="sheet-select"></select>
-        <button id="refresh-sheets" style="margin-top: 5px; background-color: #007bff;">ワークシート一覧を更新</button>
-        <button id="refresh-data" style="margin-top: 5px; background-color: #6c757d;">データを更新</button>
-    </div>
-
-    <button class="collapsible">データプレビューとフィルター情報</button>
-    <div class="content">
-        <div id="filters-info" class="filters-info">
-            <p>フィルター情報を読み込み中...</p>
-        </div>
-        
-        <div class="form-group" id="preview-group">
-            <label for="data-preview">データプレビュー (最大10行):</label>
-            <div id="data-preview" style="overflow-x:auto;"></div>
+    <div id="sheets-container" style="display: none;">
+        <h3>使用するワークシート:</h3>
+        <div id="sheet-selectors">
+            <!-- シート選択がここに動的に生成されます -->
         </div>
     </div>
 
-    <button id="send-button" style="margin-top: 15px;">送信</button>
+    <div class="form-group" id="data-format-group" style="display: none;">
+        <label for="data-format-select">データフォーマット:</label>
+        <select id="data-format-select">
+            <option value="raw">テキスト形式</option>
+            <option value="table">テーブル形式</option>
+            <option value="json">JSON形式</option>
+        </select>
+    </div>
+
+    <button id="preview-button" style="display: none; margin-right: 10px;">プレビュー</button>
+    <button id="send-button">送信</button>
     <span class="spinner" id="spinner">処理中...</span>
 
     <div id="status-message"></div>
 
-    <div class="form-group" style="margin-top: 15px;">
+    <div class="form-group" id="preview-group" style="display: none;">
+        <label for="data-preview">データプレビュー:</label>
+        <div id="data-preview" style="overflow-x:auto; border:1px solid #ddd; padding:10px; background:#f1f1f1; font-family:monospace; max-height: 300px; overflow-y: auto;"></div>
+    </div>
+
+    <div class="form-group">
         <label for="response-area">Ollamaの応答:</label>
         <div id="response-area"></div>
     </div>
 
     <script>
-        let sheets = [];
-        let currentSheet;
         let dashboard;
-        let previewData = null;
-        let currentFilters = [];
-        let debugInfo = document.getElementById('debug-info');
-        let tableauInfo = {
-            version: document.getElementById('tableau-version'),
-            dashboardName: document.getElementById('dashboard-name'),
-            sheetsCount: document.getElementById('sheets-count')
+        let sheetsMeta = [];
+        
+        // func.jsからインポートする関数のエミュレーション
+        const initializeMeta = async () => {
+            console.log('Initializing Meta');
+            let meta = [];
+            const worksheets = tableau.extensions.dashboardContent.dashboard.worksheets;
+            
+            for (let i = 0; i < worksheets.length; i++) {
+                const sheet = worksheets[i];
+                let item = {
+                    sheetName: sheet.name,
+                    selected: false,
+                    changeName: null,
+                    customCols: false
+                };
+                
+                try {
+                    const data = await sheet.getSummaryDataAsync({ignoreSelection: true});
+                    const columns = data.columns;
+                    let cols = [];
+                    
+                    for (let k = 0; k < columns.length; k++) {
+                        let newCol = {};
+                        newCol.index = columns[k].index;
+                        newCol.name = columns[k].fieldName;
+                        newCol.dataType = columns[k].dataType;
+                        newCol.selected = true;
+                        newCol.order = k + 1;
+                        cols.push(newCol);
+                    }
+                    
+                    item.columns = cols;
+                } catch (error) {
+                    console.error(`Error getting data for ${sheet.name}:`, error);
+                }
+                
+                meta.push(item);
+            }
+            
+            return meta;
+        };
+        
+        const decodeDataset = async (columns, dataset) => {
+            let rows = [];
+            for (let i = 0; i < dataset.length; i++) {
+                rows.push(await decodeRow(columns, dataset[i]));
+            }
+            return rows;
+        };
+        
+        const decodeRow = async (columns, row) => {
+            let meta = {};
+            for (let j = 0; j < columns.length; j++) {
+                if (columns[j].selected) {
+                    let val;
+                    if (row[j].value === '%null%' && row[j].nativeValue === null && row[j].formattedValue === 'Null') {
+                        val = null;
+                    } else {
+                        val = row[j].formattedValue;
+                    }
+                    meta[columns[j].outputName || columns[j].name] = val;
+                }
+            }
+            return meta;
         };
 
-        // デバッグ情報を更新する関数
-        function updateDebugInfo(message) {
-            const timestamp = new Date().toLocaleTimeString();
-            debugInfo.innerHTML += `<br>${timestamp}: ${message}`;
-            // 常に最新の情報が見えるようにスクロール
-            debugInfo.scrollTop = debugInfo.scrollHeight;
-            console.log(`DEBUG: ${message}`);
-        }
-
-        // Tableau情報を更新する関数
-        function updateTableauInfo() {
-            if (typeof tableau !== 'undefined' && tableau.extensions) {
-                try {
-                    tableauInfo.version.textContent = tableau.extensions.extensionVersion || '不明';
-                } catch (err) {
-                    tableauInfo.version.textContent = 'エラー: ' + err.message;
-                }
-
-                if (dashboard) {
-                    tableauInfo.dashboardName.textContent = dashboard.name || '不明';
-                    tableauInfo.sheetsCount.textContent = sheets.length || '0';
-                }
-            } else {
-                tableauInfo.version.textContent = 'Tableau API利用不可';
-            }
-        }
-
         document.addEventListener('DOMContentLoaded', function () {
-            console.log('DOM Content Loaded');
-            updateDebugInfo('DOM Content Loaded');
-            
-            // 折りたたみパネルの設定
-            const coll = document.getElementsByClassName("collapsible");
-            for (let i = 0; i < coll.length; i++) {
-                coll[i].addEventListener("click", function() {
-                    this.classList.toggle("active");
-                    const content = this.nextElementSibling;
-                    if (content.style.maxHeight) {
-                        content.style.maxHeight = null;
-                    } else {
-                        content.style.maxHeight = content.scrollHeight + "px";
-                    }
+            if (typeof tableau !== 'undefined') {
+                tableau.extensions.initializeAsync().then(async function () {
+                    dashboard = tableau.extensions.dashboardContent.dashboard;
+                    sheetsMeta = await initializeMeta();
+                    setupEventListeners();
+                    renderSheetSelectors();
+                    testOllamaConnection();
+                }).catch(function (err) {
+                    showError('初期化に失敗しました: ' + err);
                 });
-            }
-
-            // 強制初期化ボタンの設定
-            document.getElementById('force-init').addEventListener('click', forceInitializeTableau);
-            
-            // シート更新ボタン
-            document.getElementById('refresh-sheets').addEventListener('click', refreshWorksheets);
-            
-            initializeTableauExtension();
-            setupEventListeners();
-        });
-
-        function initializeTableauExtension() {
-            updateDebugInfo('Tableau拡張機能初期化を試行');
-            
-            if (typeof tableau !== 'undefined' && tableau.extensions) {
-                updateDebugInfo('Tableau Extensions API 検出');
-                updateTableauInfo();
-                
-                try {
-                    // 10秒のタイムアウトを設定
-                    const initPromise = tableau.extensions.initializeAsync();
-                    const timeoutPromise = new Promise((_, reject) => 
-                        setTimeout(() => reject(new Error('初期化タイムアウト')), 10000)
-                    );
-                    
-                    Promise.race([initPromise, timeoutPromise])
-                        .then(async function () {
-                            updateDebugInfo('Tableau extension initialized 成功');
-                            
-                            try {
-                                dashboard = tableau.extensions.dashboardContent.dashboard;
-                                updateDebugInfo(`ダッシュボード名: ${dashboard.name}`);
-                                
-                                await refreshWorksheets();
-                                testOllamaConnection();
-                            } catch (innerErr) {
-                                updateDebugInfo(`内部エラー: ${innerErr.message}`);
-                                console.error('内部エラー:', innerErr);
-                                showError('内部エラーが発生しました: ' + innerErr.message);
-                            }
-                            
-                            updateTableauInfo();
-                        }).catch(function (err) {
-                            updateDebugInfo(`初期化エラー: ${err.message}`);
-                            console.error('初期化エラー:', err);
-                            showError('Tableau拡張機能の初期化に失敗しました: ' + err.message);
-                            
-                            // 初期化に失敗した場合でも他の機能を有効にする
-                            document.getElementById('sheet-select-group').style.display = 'none';
-                            document.getElementById('preview-group').style.display = 'none';
-                            document.querySelector('.collapsible').style.display = 'none';
-                            document.getElementById('filters-info').innerHTML = '<p>Tableau拡張機能の初期化に失敗したため、フィルター情報はありません</p>';
-                            testOllamaConnection();
-                        });
-                } catch (err) {
-                    updateDebugInfo(`初期化試行エラー: ${err.message}`);
-                    console.error('初期化試行エラー:', err);
-                    showError('Tableau拡張機能の初期化に失敗しました: ' + err.message);
-                }
             } else {
-                updateDebugInfo('Tableau API が利用できません - おそらくTableau環境外で実行されています');
-                console.log('Running outside Tableau or Tableau API not available');
-                document.getElementById('sheet-select-group').style.display = 'none';
-                document.getElementById('preview-group').style.display = 'none';
-                document.getElementById('filters-info').innerHTML = '<p>Tableau環境外で実行中のため、フィルター情報はありません</p>';
+                setupEventListeners();
                 testOllamaConnection();
             }
-        }
-
-        // 強制的に再初期化を行う関数
-        async function forceInitializeTableau() {
-            updateDebugInfo('Tableau拡張機能の強制初期化を試行');
-            
-            if (typeof tableau === 'undefined' || !tableau.extensions) {
-                updateDebugInfo('Tableau API が利用できないため、強制初期化できません');
-                showError('Tableau API が利用できないため、強制初期化できません');
-                return;
-            }
-            
-            try {
-                updateDebugInfo('初期化中...');
-                await tableau.extensions.initializeAsync();
-                updateDebugInfo('強制初期化成功');
-                
-                dashboard = tableau.extensions.dashboardContent.dashboard;
-                updateDebugInfo(`ダッシュボード名: ${dashboard.name}`);
-                
-                await refreshWorksheets();
-                updateTableauInfo();
-                showSuccess('Tableau拡張機能の初期化に成功しました');
-            } catch (err) {
-                updateDebugInfo(`強制初期化エラー: ${err.message}`);
-                console.error('強制初期化エラー:', err);
-                showError('強制初期化に失敗しました: ' + err.message);
-            }
-        }
-
-        // ワークシート一覧を更新する関数
-        async function refreshWorksheets() {
-            updateDebugInfo('ワークシート一覧を更新中...');
-            
-            if (!dashboard) {
-                try {
-                    dashboard = tableau.extensions.dashboardContent.dashboard;
-                } catch (err) {
-                    updateDebugInfo(`ダッシュボード取得エラー: ${err.message}`);
-                    showError('ダッシュボードを取得できません: ' + err.message);
-                    return;
-                }
-            }
-            
-            try {
-                // すべてのタイプのシートを取得
-                updateDebugInfo('ワークシート取得中...');
-                
-                // Dashboard Worksheets
-                let worksheets = dashboard.worksheets || [];
-                updateDebugInfo(`通常のワークシート数: ${worksheets.length}`);
-                
-                // Objects that contain worksheets
-                let objectWorksheets = [];
-                try {
-                    if (dashboard.objects && dashboard.objects.length > 0) {
-                        objectWorksheets = dashboard.objects
-                            .filter(obj => obj.type === 'worksheet' && obj.worksheet)
-                            .map(obj => obj.worksheet);
-                        updateDebugInfo(`オブジェクト内ワークシート数: ${objectWorksheets.length}`);
-                    }
-                } catch (objErr) {
-                    updateDebugInfo(`オブジェクト内ワークシート取得エラー: ${objErr.message}`);
-                }
-                
-                // Additional worksheets from other sources
-                let additionalWorksheets = [];
-                try {
-                    // Publish actions を持つワークシートを取得
-                    if (dashboard.publishedSheets && dashboard.publishedSheets.length > 0) {
-                        additionalWorksheets = dashboard.publishedSheets
-                            .filter(sheet => sheet && sheet.name)
-                            .map(sheet => sheet);
-                        updateDebugInfo(`発行済みワークシート数: ${additionalWorksheets.length}`);
-                    }
-                } catch (addErr) {
-                    updateDebugInfo(`追加ワークシート取得エラー: ${addErr.message}`);
-                }
-                
-                // All sheets combined and deduplicated by name
-                let allSheets = [...worksheets, ...objectWorksheets, ...additionalWorksheets];
-                const sheetNames = new Set();
-                sheets = allSheets.filter(sheet => {
-                    if (!sheet || !sheet.name) return false;
-                    if (sheetNames.has(sheet.name)) return false;
-                    sheetNames.add(sheet.name);
-                    return true;
-                });
-                
-                updateDebugInfo(`最終的なシート数: ${sheets.length}`);
-                
-                if (sheets.length > 0) {
-                    updateDebugInfo(`シート名一覧: ${sheets.map(s => s.name).join(', ')}`);
-                    populateSheetSelector();
-                    await updateSelectedSheet();
-                    await fetchFiltersInfo();
-                    await refreshDataPreview();
-                } else {
-                    updateDebugInfo('利用可能なシートがありません');
-                    showError('このダッシュボードには使用可能なワークシートがありません');
-                }
-                
-                updateTableauInfo();
-            } catch (err) {
-                updateDebugInfo(`ワークシート一覧更新エラー: ${err.message}`);
-                console.error('ワークシート一覧更新エラー:', err);
-                showError('ワークシート一覧の更新に失敗しました: ' + err.message);
-            }
-        }
+        });
 
         function setupEventListeners() {
-            updateDebugInfo('イベントリスナーを設定');
             document.getElementById('send-button').addEventListener('click', sendPrompt);
             document.getElementById('ollama-url').addEventListener('change', testOllamaConnection);
-            document.getElementById('sheet-select').addEventListener('change', async function() {
-                await updateSelectedSheet();
-                await fetchFiltersInfo();
-                await refreshDataPreview();
-            });
-            document.getElementById('include-data').addEventListener('change', function() {
-                const includeData = document.getElementById('include-data').checked;
-                document.getElementById('sheet-select-group').style.display = includeData ? 'block' : 'none';
-                const collapsible = document.querySelector('.collapsible');
-                collapsible.style.display = includeData ? 'block' : 'none';
-                if (!includeData) {
-                    const content = collapsible.nextElementSibling;
-                    content.style.maxHeight = null;
-                }
-            });
-            document.getElementById('refresh-data').addEventListener('click', async function() {
-                await fetchFiltersInfo();
-                await refreshDataPreview();
-            });
-        }
-
-        function populateSheetSelector() {
-            updateDebugInfo('ワークシートセレクターを更新');
-            const sheetSelect = document.getElementById('sheet-select');
-            sheetSelect.innerHTML = '';
+            document.getElementById('include-data').addEventListener('change', toggleDataOptions);
             
-            if (sheets.length === 0) {
-                updateDebugInfo('シートが見つからないため、セレクターを更新できません');
-                const option = document.createElement('option');
-                option.value = '';
-                option.textContent = '-- 利用可能なワークシートがありません --';
-                sheetSelect.appendChild(option);
-                return;
-            }
-            
-            sheets.forEach(function(worksheet) {
-                const option = document.createElement('option');
-                option.value = worksheet.name;
-                option.textContent = worksheet.name;
-                sheetSelect.appendChild(option);
-                updateDebugInfo(`シートをセレクターに追加: ${worksheet.name}`);
-            });
-        }
-
-        async function updateSelectedSheet() {
-            const selectedSheetName = document.getElementById('sheet-select').value;
-            updateDebugInfo(`選択されたシート名: ${selectedSheetName}`);
-            
-            if (!selectedSheetName) {
-                updateDebugInfo('シート名が空です');
-                currentSheet = null;
-                return;
-            }
-            
-            currentSheet = sheets.find(sheet => sheet.name === selectedSheetName);
-            updateDebugInfo(`選択シート: ${currentSheet ? currentSheet.name : 'None'}`);
-            
-            // ワークシートが変更されたらフィルターイベントリスナーを設定
-            if (currentSheet) {
-                try {
-                    // 以前のリスナーを削除（必要に応じて）
-                    // ここではシンプルに新しいリスナーを追加
-                    currentSheet.addEventListener(tableau.TableauEventType.FilterChanged, async function(filterEvent) {
-                        updateDebugInfo(`フィルター変更: ${filterEvent}`);
-                        await fetchFiltersInfo();
-                        await refreshDataPreview();
-                    });
-                    updateDebugInfo('フィルターイベントリスナーを設定しました');
-                } catch (err) {
-                    updateDebugInfo(`イベントリスナー設定エラー: ${err.message}`);
-                    console.error('イベントリスナー設定エラー:', err);
-                }
+            if (document.getElementById('preview-button')) {
+                document.getElementById('preview-button').addEventListener('click', showDataPreview);
             }
         }
 
-        async function fetchFiltersInfo() {
-            if (!currentSheet) {
-                updateDebugInfo('現在のシートがないため、フィルター情報を取得できません');
-                return;
-            }
+        function toggleDataOptions() {
+            const includeData = document.getElementById('include-data').checked;
+            document.getElementById('sheets-container').style.display = includeData ? 'block' : 'none';
+            document.getElementById('data-format-group').style.display = includeData ? 'block' : 'none';
+            document.getElementById('preview-button').style.display = includeData ? 'inline-block' : 'none';
+        }
+
+        function renderSheetSelectors() {
+            const container = document.getElementById('sheet-selectors');
+            container.innerHTML = '';
             
-            const filtersInfo = document.getElementById('filters-info');
-            filtersInfo.innerHTML = '<p>フィルター情報を読み込み中...</p>';
-            updateDebugInfo('フィルター情報を取得中...');
-            
-            try {
-                currentFilters = await currentSheet.getFiltersAsync();
-                updateDebugInfo(`${currentFilters.length}個のフィルターを取得しました`);
+            sheetsMeta.forEach((sheetMeta, index) => {
+                const sheetDiv = document.createElement('div');
+                sheetDiv.className = 'sheet-selector';
                 
-                if (currentFilters.length === 0) {
-                    filtersInfo.innerHTML = '<p>このワークシートには適用されているフィルターがありません</p>';
-                    return;
-                }
-                
-                let filterHtml = '<h4>適用されているフィルター:</h4><ul>';
-                
-                currentFilters.forEach(function(filter) {
-                    filterHtml += `<li><strong>${filter.fieldName}</strong> (${filter.filterType}): ${getFilterValues(filter)}</li>`;
+                const sheetCheckbox = document.createElement('input');
+                sheetCheckbox.type = 'checkbox';
+                sheetCheckbox.id = `sheet-${index}`;
+                sheetCheckbox.checked = false;
+                sheetCheckbox.addEventListener('change', (e) => {
+                    sheetsMeta[index].selected = e.target.checked;
+                    document.getElementById(`columns-${index}`).style.display = e.target.checked ? 'block' : 'none';
                 });
                 
-                filterHtml += '</ul>';
-                filtersInfo.innerHTML = filterHtml;
+                const sheetLabel = document.createElement('label');
+                sheetLabel.htmlFor = `sheet-${index}`;
+                sheetLabel.style.display = 'inline';
+                sheetLabel.textContent = sheetMeta.sheetName;
                 
-                // 折りたたみパネルの高さを更新
-                const content = document.querySelector('.content');
-                if (content.style.maxHeight) {
-                    content.style.maxHeight = content.scrollHeight + "px";
-                }
-            } catch (error) {
-                updateDebugInfo(`フィルター取得エラー: ${error.message}`);
-                console.error('フィルター取得エラー:', error);
-                filtersInfo.innerHTML = '<p>フィルター情報の取得に失敗しました: ' + error.message + '</p>';
-            }
-        }
-        
-        // フィルター値を文字列で取得する関数
-        function getFilterValues(filter) {
-            let filterValues = '';
-
-            switch (filter.filterType) {
-                case 'categorical':
-                    if (filter.appliedValues && filter.appliedValues.length > 0) {
-                        filter.appliedValues.forEach(function(value) {
-                            filterValues += value.formattedValue + ', ';
+                sheetDiv.appendChild(sheetCheckbox);
+                sheetDiv.appendChild(sheetLabel);
+                
+                // カラム選択コンテナを作成
+                const columnsDiv = document.createElement('div');
+                columnsDiv.id = `columns-${index}`;
+                columnsDiv.className = 'column-selector';
+                
+                if (sheetMeta.columns && sheetMeta.columns.length > 0) {
+                    sheetMeta.columns.forEach((column, colIndex) => {
+                        const colDiv = document.createElement('div');
+                        
+                        const colCheckbox = document.createElement('input');
+                        colCheckbox.type = 'checkbox';
+                        colCheckbox.id = `col-${index}-${colIndex}`;
+                        colCheckbox.checked = column.selected;
+                        colCheckbox.addEventListener('change', (e) => {
+                            sheetsMeta[index].columns[colIndex].selected = e.target.checked;
                         });
-                        // 最後のカンマとスペースを削除
-                        filterValues = filterValues.slice(0, -2);
-                    } else {
-                        filterValues = '(値なし)';
-                    }
-                    break;
-                case 'range':
-                    // 範囲フィルターは最小値と最大値を持つことがある
-                    if (filter.minValue) {
-                        filterValues += '最小: ' + filter.minValue.formattedValue;
-                    }
-                    if (filter.minValue && filter.maxValue) {
-                        filterValues += ', ';
-                    }
-                    if (filter.maxValue) {
-                        filterValues += '最大: ' + filter.maxValue.formattedValue;
-                    }
-                    if (!filterValues) {
-                        filterValues = '(範囲なし)';
-                    }
-                    break;
-                case 'relative-date':
-                    filterValues += '期間: ' + filter.periodType;
-                    if (filter.rangeN !== undefined) {
-                        filterValues += ', 範囲: ' + filter.rangeN;
-                    }
-                    if (filter.rangeType) {
-                        filterValues += ', タイプ: ' + filter.rangeType;
-                    }
-                    break;
-                default:
-                    filterValues = '(不明なフィルター形式)';
-            }
-
-            return filterValues;
+                        
+                        const colLabel = document.createElement('label');
+                        colLabel.htmlFor = `col-${index}-${colIndex}`;
+                        colLabel.style.display = 'inline';
+                        colLabel.textContent = column.name;
+                        
+                        colDiv.appendChild(colCheckbox);
+                        colDiv.appendChild(colLabel);
+                        columnsDiv.appendChild(colDiv);
+                    });
+                }
+                
+                sheetDiv.appendChild(columnsDiv);
+                container.appendChild(sheetDiv);
+            });
         }
 
-        async function refreshDataPreview() {
-            if (!currentSheet) {
-                updateDebugInfo('現在のシートがないため、データプレビューを取得できません');
+        async function showDataPreview() {
+            const preview = document.getElementById('data-preview');
+            const previewGroup = document.getElementById('preview-group');
+            previewGroup.style.display = 'block';
+            preview.textContent = '読み込み中...';
+            
+            const format = document.getElementById('data-format-select').value;
+            const selectedSheets = sheetsMeta.filter(s => s.selected);
+            
+            if (selectedSheets.length === 0) {
+                preview.textContent = 'シートが選択されていません。';
                 return;
             }
             
-            const dataPreview = document.getElementById('data-preview');
-            dataPreview.innerHTML = '<p>データ読み込み中...</p>';
-            updateDebugInfo('データプレビューを取得中...');
-            
             try {
-                // データの取得
-                const dataTable = await currentSheet.getSummaryDataAsync();
-                previewData = dataTable;
-                updateDebugInfo(`データ取得成功: ${dataTable.data.length}行`);
-                
-                // データが空かどうかチェック
-                if (!dataTable || !dataTable.data || dataTable.data.length === 0) {
-                    dataPreview.innerHTML = '<p>データがありません</p>';
-                    updateDebugInfo('データが空です');
-                    return;
-                }
-                
-                // テーブルの作成
-                const table = document.createElement('table');
-                table.className = 'data-table';
-                
-                // ヘッダー行の作成
-                const headerRow = document.createElement('tr');
-                dataTable.columns.forEach(column => {
-                    const th = document.createElement('th');
-                    th.textContent = column.fieldName;
-                    headerRow.appendChild(th);
-                });
-                
-                const thead = document.createElement('thead');
-                thead.appendChild(headerRow);
-                table.appendChild(thead);
-                
-                // データ行の作成（最大10行まで）
-                const tbody = document.createElement('tbody');
-                const maxRows = Math.min(dataTable.data.length, 10);
-                
-                for (let i = 0; i < maxRows; i++) {
-                    const dataRow = dataTable.data[i];
-                    const tr = document.createElement('tr');
-                    
-                    dataTable.columns.forEach((column, colIndex) => {
-                        const td = document.createElement('td');
-                        td.textContent = dataRow[colIndex].formattedValue || dataRow[colIndex].value || '';
-                        tr.appendChild(td);
-                    });
-                    
-                    tbody.appendChild(tr);
-                }
-                
-                table.appendChild(tbody);
-                
-                // テーブルをプレビュー領域に追加
-                dataPreview.innerHTML = '';
-                dataPreview.appendChild(table);
-                
-                // 合計行数の表示
-                const totalRows = document.createElement('p');
-                totalRows.textContent = `全 ${dataTable.data.length} 行中 ${maxRows} 行を表示しています。`;
-                totalRows.style.marginTop = '5px';
-                totalRows.style.fontSize = '0.8em';
-                dataPreview.appendChild(totalRows);
-                
-                // 折りたたみパネルの高さを更新
-                const content = document.querySelector('.content');
-                if (content.style.maxHeight) {
-                    content.style.maxHeight = content.scrollHeight + "px";
-                }
-                
-                showSuccess('データを取得しました');
-            } catch (error) {
-                updateDebugInfo(`データ取得エラー: ${error.message}`);
-                console.error('データ取得エラー:', error);
-                dataPreview.innerHTML = '<p>データの取得に失敗しました: ' + error.message + '</p>';
-                showError('データの取得に失敗しました: ' + error.message);
+                const previewData = await getFormattedData(format);
+                preview.textContent = previewData;
+            } catch (err) {
+                preview.textContent = 'プレビュー取得失敗: ' + err.message;
             }
+        }
+
+        async function getFormattedData(format) {
+            const selectedSheets = sheetsMeta.filter(s => s.selected);
+            const worksheets = tableau.extensions.dashboardContent.dashboard.worksheets;
+            let formattedData = '';
+            
+            switch (format) {
+                case 'raw':
+                    for (const sheetMeta of selectedSheets) {
+                        const sheet = worksheets.find(ws => ws.name === sheetMeta.sheetName);
+                        if (!sheet) continue;
+                        
+                        const data = await sheet.getSummaryDataAsync({ignoreSelection: true});
+                        const selectedColumns = sheetMeta.columns.filter(col => col.selected);
+                        const columnNames = selectedColumns.map(col => col.name);
+                        
+                        formattedData += `# ${sheetMeta.sheetName}\n`;
+                        formattedData += columnNames.join('\t') + '\n';
+                        
+                        for (let i = 0; i < data.data.length; i++) {
+                            const row = data.data[i];
+                            const formattedRow = selectedColumns.map(col => {
+                                const colIndex = sheetMeta.columns.findIndex(c => c.name === col.name);
+                                return row[colIndex].formattedValue || row[colIndex].value || '';
+                            }).join('\t');
+                            formattedData += formattedRow + '\n';
+                        }
+                        formattedData += '\n';
+                    }
+                    break;
+                    
+                case 'table':
+                    for (const sheetMeta of selectedSheets) {
+                        const sheet = worksheets.find(ws => ws.name === sheetMeta.sheetName);
+                        if (!sheet) continue;
+                        
+                        const data = await sheet.getSummaryDataAsync({ignoreSelection: true});
+                        const selectedColumns = sheetMeta.columns.filter(col => col.selected);
+                        
+                        formattedData += `# ${sheetMeta.sheetName}\n`;
+                        formattedData += '| ' + selectedColumns.map(col => col.name).join(' | ') + ' |\n';
+                        formattedData += '| ' + selectedColumns.map(() => '---').join(' | ') + ' |\n';
+                        
+                        for (let i = 0; i < Math.min(data.data.length, 50); i++) {
+                            const row = data.data[i];
+                            const formattedRow = selectedColumns.map(col => {
+                                const colIndex = sheetMeta.columns.findIndex(c => c.name === col.name);
+                                return row[colIndex].formattedValue || row[colIndex].value || '';
+                            }).join(' | ');
+                            formattedData += '| ' + formattedRow + ' |\n';
+                        }
+                        formattedData += '\n';
+                    }
+                    break;
+                    
+                case 'json':
+                    const jsonData = {};
+                    
+                    for (const sheetMeta of selectedSheets) {
+                        const sheet = worksheets.find(ws => ws.name === sheetMeta.sheetName);
+                        if (!sheet) continue;
+                        
+                        const data = await sheet.getSummaryDataAsync({ignoreSelection: true});
+                        const selectedColumns = sheetMeta.columns.filter(col => col.selected);
+                        
+                        const columns = data.columns.map((col, idx) => {
+                            const colMeta = selectedColumns.find(c => c.name === col.fieldName);
+                            if (colMeta) {
+                                return { ...col, selected: true, outputName: colMeta.changeName || colMeta.name };
+                            } else {
+                                return { ...col, selected: false };
+                            }
+                        }).filter(col => col.selected);
+                        
+                        const rows = await decodeDataset(columns, data.data);
+                        jsonData[sheetMeta.sheetName] = rows;
+                    }
+                    
+                    formattedData = JSON.stringify(jsonData, null, 2);
+                    break;
+            }
+            
+            return formattedData;
         }
 
         async function testOllamaConnection() {
-    const ollamaUrl = document.getElementById('ollama-url').value.trim();
-    updateDebugInfo(`Ollama接続テスト: ${ollamaUrl}`);
-    
-    try {
-        const response = await fetch(ollamaUrl, {
-            method: 'GET'
-        });
-        
-        if (response.ok) {
-            updateDebugInfo('Ollama接続成功');
-            showSuccess('Ollamaサーバーに接続できました');
-            
-            // モデル一覧を取得
+            const ollamaUrl = document.getElementById('ollama-url').value.trim();
             try {
-                const tagsResponse = await fetch(`${ollamaUrl}/api/tags`, {
-                    method: 'GET'
-                });
-                
-                if (tagsResponse.ok) {
-                    const tagsData = await tagsResponse.json();
-                    updateModelSelector(tagsData);
-                    updateDebugInfo(`モデル一覧取得成功: ${tagsData.models ? tagsData.models.length : 0}個のモデル`);
+                const response = await fetch(ollamaUrl, { method: 'GET' });
+                if (response.ok) showSuccess('Ollamaサーバーに接続できました');
+                else showError('応答エラー: ' + response.status);
+            } catch (error) {
+                showError('接続失敗: ' + error.message);
+            }
+        }
+
+        async function sendPrompt() {
+            const ollamaUrl = document.getElementById('ollama-url').value.trim();
+            const modelName = document.getElementById('model-select').value;
+            const promptInput = document.getElementById('prompt-input').value.trim();
+            const includeData = document.getElementById('include-data').checked;
+            const responseArea = document.getElementById('response-area');
+            const spinner = document.getElementById('spinner');
+            const sendButton = document.getElementById('send-button');
+
+            if (!promptInput) {
+                alert('プロンプトを入力してください');
+                return;
+            }
+
+            spinner.style.display = 'inline';
+            sendButton.disabled = true;
+            responseArea.textContent = '処理中...';
+            showStatus('送信中...');
+
+            let finalPrompt = promptInput;
+            
+            if (includeData && typeof tableau !== 'undefined') {
+                try {
+                    const format = document.getElementById('data-format-select').value;
+                    const formattedData = await getFormattedData(format);
+                    
+                    if (formattedData) {
+                        finalPrompt = `以下のTableauデータを分析して回答してください:
+
+${formattedData}
+
+質問: ${promptInput}`;
+                    }
+                } catch (error) {
+                    showError('データ取得失敗: ' + error.message);
+                    spinner.style.display = 'none';
+                    sendButton.disabled = false;
+                    return;
                 }
-            } catch (tagsError) {
-                updateDebugInfo(`モデル一覧取得エラー: ${tagsError.message}`);
-                console.log('モデル一覧の取得に失敗しました:', tagsError);
-                // モデル一覧取得失敗は致命的でないのでエラー表示はしない
             }
-        } else {
-            updateDebugInfo(`Ollama応答エラー: ${response.status}`);
-            showError('Ollamaサーバーの応答エラー: ' + response.status);
-        }
-    } catch (error) {
-        updateDebugInfo(`Ollama接続エラー: ${error.message}`);
-        console.error('接続テストエラー:', error);
-        showError('Ollamaサーバーに接続できません: ' + error.message);
-    }
-}
 
-function updateModelSelector(tagsData) {
-    if (!tagsData || !tagsData.models || tagsData.models.length === 0) {
-        updateDebugInfo('利用可能なモデルがありません');
-        return;
-    }
-    
-    const modelSelect = document.getElementById('model-select');
-    modelSelect.innerHTML = '';
-    
-    tagsData.models.forEach(model => {
-        const option = document.createElement('option');
-        option.value = model.name;
-        option.textContent = model.name;
-        modelSelect.appendChild(option);
-        updateDebugInfo(`モデルをセレクターに追加: ${model.name}`);
-    });
-}
-
-async function sendPrompt() {
-    const ollamaUrl = document.getElementById('ollama-url').value.trim();
-    const modelName = document.getElementById('model-select').value;
-    const promptInput = document.getElementById('prompt-input').value.trim();
-    const includeData = document.getElementById('include-data').checked;
-    const responseArea = document.getElementById('response-area');
-    const spinner = document.getElementById('spinner');
-    const sendButton = document.getElementById('send-button');
-    
-    if (!promptInput) {
-        alert('プロンプトを入力してください');
-        return;
-    }
-    
-    // 送信中の表示
-    spinner.style.display = 'inline';
-    sendButton.disabled = true;
-    responseArea.textContent = '処理中...';
-    showStatus('リクエスト送信中...');
-    updateDebugInfo(`プロンプト送信: モデル=${modelName}, データ含む=${includeData}`);
-    
-    // プロンプトを作成
-    let finalPrompt = promptInput;
-    
-    if (includeData && currentSheet && previewData) {
-        try {
-            // プレビューデータを文字列に変換
-            let tableText = '';
-            
-            // ヘッダー行
-            const headers = previewData.columns.map(col => col.fieldName);
-            tableText += headers.join('\t') + '\n';
-            
-            // データ行
-            for (let i = 0; i < previewData.data.length; i++) {
-                const row = previewData.data[i];
-                const rowValues = [];
-                
-                for (let j = 0; j < row.length; j++) {
-                    rowValues.push(row[j].formattedValue || row[j].value || '');
-                }
-                
-                tableText += rowValues.join('\t') + '\n';
-            }
-            
-            // フィルター情報を追加
-            let filtersText = '';
-            if (currentFilters && currentFilters.length > 0) {
-                filtersText = '\n適用中のフィルター:\n';
-                currentFilters.forEach(function(filter) {
-                    filtersText += `- ${filter.fieldName} (${filter.filterType}): ${getFilterValues(filter)}\n`;
+            try {
+                const response = await fetch(`${ollamaUrl}/api/generate`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ model: modelName, prompt: finalPrompt, stream: false })
                 });
+                if (!response.ok) throw new Error(`HTTP error! Status: ${response.status}`);
+                const data = await response.json();
+                responseArea.textContent = data.response || 'レスポンスが空です';
+                showSuccess('応答を受信しました');
+            } catch (error) {
+                showError('送信失敗: ' + error.message);
+                responseArea.textContent = '';
+            } finally {
+                spinner.style.display = 'none';
+                sendButton.disabled = false;
             }
-            
-            // プロンプトにデータとフィルター情報を追加
-            finalPrompt = `以下のTableauデータを分析して回答してください:${filtersText}\n${tableText}\n\n${promptInput}`;
-            updateDebugInfo('データとフィルター情報を含むプロンプトを作成しました');
-        } catch (error) {
-            updateDebugInfo(`データ変換エラー: ${error.message}`);
-            console.error('データ変換エラー:', error);
-            showError('データの変換に失敗しました: ' + error.message);
-            spinner.style.display = 'none';
-            sendButton.disabled = false;
-            return;
         }
-    }
-    
-    // Ollamaへリクエストを送信
-    try {
-        updateDebugInfo(`Ollamaにリクエスト送信中: ${ollamaUrl}`);
-        
-        const response = await fetch(`${ollamaUrl}/api/generate`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                model: modelName,
-                prompt: finalPrompt,
-                stream: false
-            })
-        });
-        
-        if (!response.ok) {
-            throw new Error(`HTTP error! Status: ${response.status}`);
+
+        function showError(msg) {
+            const status = document.getElementById('status-message');
+            status.textContent = msg; status.className = 'error';
         }
-        
-        const data = await response.json();
-        updateDebugInfo('レスポンス受信');
-        
-        if (data && data.response) {
-            responseArea.textContent = data.response;
-            showSuccess('応答を受信しました');
-        } else {
-            responseArea.textContent = 'レスポンスが空か不正な形式です';
-            showError('不正なレスポンス形式');
+        function showSuccess(msg) {
+            const status = document.getElementById('status-message');
+            status.textContent = msg; status.className = 'success';
         }
-    } catch (error) {
-        updateDebugInfo(`Ollamaリクエストエラー: ${error.message}`);
-        console.error('Ollamaリクエストエラー:', error);
-        showError('エラーが発生しました: ' + error.message);
-        responseArea.textContent = '';
-    } finally {
-        spinner.style.display = 'none';
-        sendButton.disabled = false;
-    }
-}
-
-function showError(message) {
-    const statusMessage = document.getElementById('status-message');
-    statusMessage.textContent = message;
-    statusMessage.className = 'error';
-    updateDebugInfo(`エラー: ${message}`);
-}
-
-function showSuccess(message) {
-    const statusMessage = document.getElementById('status-message');
-    statusMessage.textContent = message;
-    statusMessage.className = 'success';
-    updateDebugInfo(`成功: ${message}`);
-}
-
-function showStatus(message) {
-    const statusMessage = document.getElementById('status-message');
-    statusMessage.textContent = message;
-    statusMessage.className = '';
-    updateDebugInfo(`ステータス: ${message}`);
-}
-
-// Tablueバージョン情報を定期的に更新
-setInterval(function() {
-    if (typeof tableau !== 'undefined' && tableau.extensions) {
-        updateTableauInfo();
-    }
-}, 5000);
-
-// 初期化状態をより詳しく表示
-window.addEventListener('error', function(event) {
-    updateDebugInfo(`グローバルエラー: ${event.message} at ${event.filename}:${event.lineno}`);
-});
-
-// Tableau API のバージョンとサポート状況を確認
-function checkTableauVersion() {
-    updateDebugInfo('Tableau APIバージョンチェック');
-    
-    if (typeof tableau === 'undefined') {
-        updateDebugInfo('Tableau API未定義');
-        return false;
-    }
-    
-    if (!tableau.extensions) {
-        updateDebugInfo('Tableau Extensions API未定義');
-        return false;
-    }
-    
-    try {
-        const version = tableau.extensions.extensionVersion || '不明';
-        updateDebugInfo(`Tableau Extensions API バージョン: ${version}`);
-        return true;
-    } catch (err) {
-        updateDebugInfo(`バージョン取得エラー: ${err.message}`);
-        return false;
-    }
-}
-
-// コンソールログを拡張してデバッグ情報を追加
-const originalConsoleLog = console.log;
-console.log = function() {
-    // 元のログ機能を呼び出し
-    originalConsoleLog.apply(console, arguments);
-    
-    // デバッグエリアにも追加
-    try {
-        const args = Array.from(arguments).map(arg => {
-            if (typeof arg === 'object') {
-                return JSON.stringify(arg);
-            }
-            return String(arg);
-        });
-        
-        updateDebugInfo(`Console: ${args.join(' ')}`);
-    } catch (err) {
-        // エラーが発生した場合は元のログのみ残す
-    }
-};
+        function showStatus(msg) {
+            const status = document.getElementById('status-message');
+            status.textContent = msg; status.className = '';
+        }
+    </script>
+</body>
+</html>
