@@ -123,6 +123,14 @@
         let dashboard;
         let sheetsMeta = [];
         
+        // タブローが読み込まれたかどうかをチェックする関数
+        function isTableauInitialized() {
+            return typeof tableau !== 'undefined' && 
+                   tableau.extensions && 
+                   tableau.extensions.dashboardContent && 
+                   tableau.extensions.dashboardContent.dashboard;
+        }
+        
         // func.jsからインポートする関数のエミュレーション
         const initializeMeta = async () => {
             console.log('Initializing Meta');
@@ -135,7 +143,7 @@
             
             try {
                 // Make sure tableau extensions exist and are loaded
-                if (!tableau || !tableau.extensions || !tableau.extensions.dashboardContent) {
+                if (!isTableauInitialized()) {
                     console.error('Tableau Extensions API not available');
                     if (statusElement) {
                         statusElement.innerHTML = '<div class="error">Tableau Extensions APIが利用できません</div>';
@@ -256,19 +264,33 @@
             return meta;
         };
 
-        document.addEventListener('DOMContentLoaded', function () {
+                document.addEventListener('DOMContentLoaded', function () {
+            console.log('DOM Content Loaded');
+            
+            // Check if tableau is available
             if (typeof tableau !== 'undefined') {
+                console.log('Tableau object exists, initializing extension...');
+                
+                // Initialize the extension
                 tableau.extensions.initializeAsync().then(async function () {
-                    dashboard = tableau.extensions.dashboardContent.dashboard;
-                    console.log('Dashboard loaded:', dashboard.name);
-                    console.log('Worksheets found:', dashboard.worksheets.length);
-                    // Log worksheet names for debugging
-                    dashboard.worksheets.forEach(ws => {
-                        console.log('Worksheet found:', ws.name);
-                    });
+                    console.log('Extension initialized successfully');
                     
-                    sheetsMeta = await initializeMeta();
-                    console.log('Sheet meta initialized:', sheetsMeta);
+                    if (isTableauInitialized()) {
+                        dashboard = tableau.extensions.dashboardContent.dashboard;
+                        console.log('Dashboard loaded:', dashboard.name);
+                        console.log('Worksheets found:', dashboard.worksheets.length);
+                        
+                        // Log worksheet names for debugging
+                        dashboard.worksheets.forEach(ws => {
+                            console.log('Worksheet found:', ws.name);
+                        });
+                        
+                        sheetsMeta = await initializeMeta();
+                        console.log('Sheet meta initialized:', sheetsMeta);
+                    } else {
+                        console.error('Tableau dashboard not available after initialization');
+                        showError('Tableauダッシュボードが利用できません');
+                    }
                     
                     setupEventListeners();
                     toggleDataOptions(); // Make sure data options are visible if include-data is checked
@@ -279,7 +301,11 @@
                     console.error('Initialization error:', err);
                 });
             } else {
+                console.warn('Tableau object is not defined. Running in standalone mode.');
+                showWarning('Tableau拡張機能として実行されていません。一部の機能が制限されます。');
+                
                 setupEventListeners();
+                toggleDataOptions();
                 testOllamaConnection();
             }
         });
@@ -302,6 +328,15 @@
             }
             
             try {
+                // Check if tableau is defined
+                if (!isTableauInitialized()) {
+                    showError('Tableau Extensions APIが読み込まれていません');
+                    if (statusElement) {
+                        statusElement.innerHTML = '<div class="error">Tableau Extensions APIが利用できません</div>';
+                    }
+                    return;
+                }
+                
                 dashboard = tableau.extensions.dashboardContent.dashboard;
                 console.log('Dashboard reloaded:', dashboard.name);
                 console.log('Worksheets found:', dashboard.worksheets.length);
@@ -500,9 +535,18 @@
         }
 
         async function getFormattedData(format) {
+            if (!isTableauInitialized()) {
+                console.error('Tableau is not initialized, cannot get data');
+                return 'Tableauからデータを取得できません。';
+            }
+            
             const selectedSheets = sheetsMeta.filter(s => s.selected);
             const worksheets = tableau.extensions.dashboardContent.dashboard.worksheets;
             let formattedData = '';
+            
+            if (selectedSheets.length === 0) {
+                return '選択されたシートがありません。';
+            }
             
             switch (format) {
                 case 'raw':
@@ -510,11 +554,93 @@
                         const sheet = worksheets.find(ws => ws.name === sheetMeta.sheetName);
                         if (!sheet) continue;
                         
-                        const data = await sheet.getSummaryDataAsync({ignoreSelection: true});
-                        const selectedColumns = sheetMeta.columns.filter(col => col.selected);
-                        const columnNames = selectedColumns.map(col => col.name);
+                        try {
+                            const data = await sheet.getSummaryDataAsync({ignoreSelection: true});
+                            const selectedColumns = sheetMeta.columns.filter(col => col.selected);
+                            const columnNames = selectedColumns.map(col => col.name);
+                            
+                            formattedData += `# ${sheetMeta.sheetName}\n`;
+                            formattedData += columnNames.join('\t') + '\n';
+                            
+                            for (let i = 0; i < data.data.length; i++) {
+                                const row = data.data[i];
+                                const formattedRow = selectedColumns.map(col => {
+                                    const colIndex = sheetMeta.columns.findIndex(c => c.name === col.name);
+                                    return row[colIndex].formattedValue || row[colIndex].value || '';
+                                }).join('\t');
+                                formattedData += formattedRow + '\n';
+                            }
+                            formattedData += '\n';
+                        } catch (error) {
+                            console.error(`Error getting data for ${sheet.name}:`, error);
+                            formattedData += `# ${sheetMeta.sheetName}\nデータ取得エラー: ${error.message}\n\n`;
+                        }
+                    }
+                    break;
+                    
+                case 'table':
+                    for (const sheetMeta of selectedSheets) {
+                        const sheet = worksheets.find(ws => ws.name === sheetMeta.sheetName);
+                        if (!sheet) continue;
                         
-                        formattedData += `# ${sheetMeta.sheetName}\n`;
+                        try {
+                            const data = await sheet.getSummaryDataAsync({ignoreSelection: true});
+                            const selectedColumns = sheetMeta.columns.filter(col => col.selected);
+                            
+                            formattedData += `# ${sheetMeta.sheetName}\n`;
+                            formattedData += '| ' + selectedColumns.map(col => col.name).join(' | ') + ' |\n';
+                            formattedData += '| ' + selectedColumns.map(() => '---').join(' | ') + ' |\n';
+                            
+                            for (let i = 0; i < Math.min(data.data.length, 50); i++) {
+                                const row = data.data[i];
+                                const formattedRow = selectedColumns.map(col => {
+                                    const colIndex = sheetMeta.columns.findIndex(c => c.name === col.name);
+                                    return row[colIndex].formattedValue || row[colIndex].value || '';
+                                }).join(' | ');
+                                formattedData += '| ' + formattedRow + ' |\n';
+                            }
+                            formattedData += '\n';
+                        } catch (error) {
+                            console.error(`Error getting data for ${sheet.name}:`, error);
+                            formattedData += `# ${sheetMeta.sheetName}\nデータ取得エラー: ${error.message}\n\n`;
+                        }
+                    }
+                    break;
+                    
+                case 'json':
+                    const jsonData = {};
+                    
+                    for (const sheetMeta of selectedSheets) {
+                        const sheet = worksheets.find(ws => ws.name === sheetMeta.sheetName);
+                        if (!sheet) continue;
+                        
+                        try {
+                            const data = await sheet.getSummaryDataAsync({ignoreSelection: true});
+                            const selectedColumns = sheetMeta.columns.filter(col => col.selected);
+                            
+                            const columns = data.columns.map((col, idx) => {
+                                const colMeta = selectedColumns.find(c => c.name === col.fieldName);
+                                if (colMeta) {
+                                    return { ...col, selected: true, outputName: colMeta.changeName || colMeta.name };
+                                } else {
+                                    return { ...col, selected: false };
+                                }
+                            }).filter(col => col.selected);
+                            
+                            const rows = await decodeDataset(columns, data.data);
+                            jsonData[sheetMeta.sheetName] = rows;
+                        } catch (error) {
+                            console.error(`Error getting data for ${sheet.name}:`, error);
+                            jsonData[sheetMeta.sheetName] = { error: error.message };
+                        }
+                    }
+                    
+                    formattedData = JSON.stringify(jsonData, null, 2);
+                    break;
+            }
+            
+            return formattedData;
+        }eetMeta.sheetName}\n`;
                         formattedData += columnNames.join('\t') + '\n';
                         
                         for (let i = 0; i < data.data.length; i++) {
@@ -615,17 +741,21 @@
 
             let finalPrompt = promptInput;
             
-            if (includeData && typeof tableau !== 'undefined') {
+            if (includeData) {
                 try {
-                    const format = document.getElementById('data-format-select').value;
-                    const formattedData = await getFormattedData(format);
-                    
-                    if (formattedData) {
-                        finalPrompt = `以下のTableauデータを分析して回答してください:
+                    if (isTableauInitialized()) {
+                        const format = document.getElementById('data-format-select').value;
+                        const formattedData = await getFormattedData(format);
+                        
+                        if (formattedData) {
+                            finalPrompt = `以下のTableauデータを分析して回答してください:
 
 ${formattedData}
 
 質問: ${promptInput}`;
+                        }
+                    } else {
+                        showWarning('Tableauデータにアクセスできません。プロンプトのみを送信します。');
                     }
                 } catch (error) {
                     showError('データ取得失敗: ' + error.message);
@@ -665,6 +795,10 @@ ${formattedData}
         function showStatus(msg) {
             const status = document.getElementById('status-message');
             status.textContent = msg; status.className = '';
+        }
+        function showWarning(msg) {
+            const status = document.getElementById('status-message');
+            status.textContent = msg; status.className = 'warning';
         }
     </script>
 </body>
