@@ -2,53 +2,131 @@
 <html>
 <head>
     <meta charset="utf-8">
-    <title>超シンプルなTableauテスト</title>
-    <script src="https://cdn.jsdelivr.net/npm/@tableau/extensions-api/lib/tableau.extensions.1.latest.min.js"></script>
+    <title>最小限のTableau拡張機能</title>
+    <!-- Tableau Extensions API -->
+    <script src="https://cdn.jsdelivr.net/npm/@tableau/extensions-api@1.9.0/lib/tableau.extensions.1.latest.min.js"></script>
 </head>
 <body>
-    <h1>Tableau API テスト</h1>
-    <div id="status">ステータス: 未初期化</div>
-    <button id="init-button">初期化</button>
-    <div id="result">結果がここに表示されます</div>
+    <h1>Tableau拡張機能テスト</h1>
+    <div id="debug-info" style="margin: 20px; padding: 10px; border: 1px solid #ccc; background-color: #f9f9f9;">
+        <h3>デバッグ情報</h3>
+        <div id="tableau-status">Tableauステータス: 確認中...</div>
+        <div id="extension-status">拡張機能ステータス: 未初期化</div>
+    </div>
+
+    <div style="margin: 20px;">
+        <button id="check-button" style="padding: 10px; background-color: #4CAF50; color: white; border: none; cursor: pointer;">
+            Tableauオブジェクト確認
+        </button>
+        <button id="init-button" style="padding: 10px; background-color: #008CBA; color: white; border: none; cursor: pointer; margin-left: 10px;">
+            初期化
+        </button>
+    </div>
+
+    <div id="result" style="margin: 20px; padding: 10px; border: 1px solid #ccc; min-height: 100px;">
+        結果がここに表示されます
+    </div>
 
     <script>
-        document.getElementById('init-button').addEventListener('click', function() {
-            const statusDiv = document.getElementById('status');
-            const resultDiv = document.getElementById('result');
+        document.addEventListener('DOMContentLoaded', function() {
+            // ページ読み込み時にTableauオブジェクトの存在を確認
+            checkTableauObject();
             
-            statusDiv.textContent = 'ステータス: 初期化試行中...';
-            
-            // Tableau オブジェクトが存在するかチェック
-            if (typeof tableau === 'undefined') {
-                statusDiv.textContent = 'ステータス: エラー - tableauオブジェクトが見つかりません';
-                return;
-            }
-            
-            // Extensions APIが存在するかチェック
-            if (!tableau.extensions) {
-                statusDiv.textContent = 'ステータス: エラー - tableau.extensionsが見つかりません';
-                return;
-            }
-            
-            // 初期化実行
-            tableau.extensions.initializeAsync().then(function() {
-                statusDiv.textContent = 'ステータス: 初期化成功!';
-                
-                // ダッシュボード情報を取得
-                const dashboard = tableau.extensions.dashboardContent.dashboard;
-                const worksheets = dashboard.worksheets;
-                
-                resultDiv.innerHTML = `
-                    <p>ダッシュボード名: ${dashboard.name}</p>
-                    <p>ワークシート数: ${worksheets.length}</p>
-                    <ul>
-                        ${worksheets.map(sheet => `<li>${sheet.name}</li>`).join('')}
-                    </ul>
-                `;
-            }).catch(function(err) {
-                statusDiv.textContent = 'ステータス: 初期化エラー - ' + err.message;
-            });
+            // ボタンのイベントリスナー
+            document.getElementById('check-button').addEventListener('click', checkTableauObject);
+            document.getElementById('init-button').addEventListener('click', initializeExtension);
         });
+
+        // Tableauオブジェクトの存在確認
+        function checkTableauObject() {
+            const statusElement = document.getElementById('tableau-status');
+            const resultElement = document.getElementById('result');
+            
+            resultElement.innerHTML = '<p>Tableauオブジェクト確認中...</p>';
+            
+            // windowオブジェクトのすべてのプロパティを出力（デバッグ用）
+            let windowProps = [];
+            for (let prop in window) {
+                windowProps.push(prop);
+            }
+            
+            if (typeof tableau === 'undefined') {
+                statusElement.textContent = 'Tableauステータス: tableauオブジェクトが見つかりません';
+                statusElement.style.color = 'red';
+                
+                resultElement.innerHTML += '<p style="color: red;">エラー: tableauオブジェクトが見つかりません</p>';
+                resultElement.innerHTML += '<p>window.tableau: ' + (window.tableau ? '存在します' : '存在しません') + '</p>';
+                resultElement.innerHTML += '<p>window オブジェクトの先頭10個のプロパティ: ' + windowProps.slice(0, 10).join(', ') + '...</p>';
+            } else {
+                statusElement.textContent = 'Tableauステータス: tableauオブジェクトが見つかりました';
+                statusElement.style.color = 'green';
+                
+                resultElement.innerHTML += '<p style="color: green;">成功: tableauオブジェクトが見つかりました</p>';
+                
+                // extensions APIの存在確認
+                if (tableau.extensions) {
+                    resultElement.innerHTML += '<p>tableau.extensions: 存在します</p>';
+                } else {
+                    resultElement.innerHTML += '<p>tableau.extensions: 存在しません</p>';
+                }
+            }
+        }
+
+        // 拡張機能の初期化
+        function initializeExtension() {
+            const statusElement = document.getElementById('extension-status');
+            const resultElement = document.getElementById('result');
+            
+            statusElement.textContent = '拡張機能ステータス: 初期化中...';
+            resultElement.innerHTML = '<p>拡張機能初期化中...</p>';
+            
+            // tableauオブジェクトの存在チェック
+            if (typeof tableau === 'undefined' || !tableau.extensions) {
+                statusElement.textContent = '拡張機能ステータス: エラー - tableau.extensionsが利用できません';
+                statusElement.style.color = 'red';
+                resultElement.innerHTML += '<p style="color: red;">エラー: tableau.extensionsが利用できません</p>';
+                return;
+            }
+            
+            // 初期化の実行
+            tableau.extensions.initializeAsync()
+                .then(function() {
+                    statusElement.textContent = '拡張機能ステータス: 初期化成功!';
+                    statusElement.style.color = 'green';
+                    
+                    // ダッシュボード情報の取得
+                    const dashboard = tableau.extensions.dashboardContent.dashboard;
+                    const worksheets = dashboard.worksheets;
+                    
+                    resultElement.innerHTML = `
+                        <p style="color: green;">初期化成功!</p>
+                        <p>ダッシュボード名: ${dashboard.name}</p>
+                        <p>ワークシート数: ${worksheets.length}</p>
+                    `;
+                    
+                    if (worksheets.length > 0) {
+                        let worksheetList = '<ul>';
+                        worksheets.forEach(function(sheet) {
+                            worksheetList += `<li>${sheet.name}</li>`;
+                        });
+                        worksheetList += '</ul>';
+                        
+                        resultElement.innerHTML += `
+                            <p>ワークシート一覧:</p>
+                            ${worksheetList}
+                        `;
+                    }
+                })
+                .catch(function(err) {
+                    statusElement.textContent = '拡張機能ステータス: 初期化エラー';
+                    statusElement.style.color = 'red';
+                    
+                    resultElement.innerHTML += `
+                        <p style="color: red;">初期化エラー:</p>
+                        <p>${err.message}</p>
+                    `;
+                });
+        }
     </script>
 </body>
 </html>
