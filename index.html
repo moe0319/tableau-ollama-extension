@@ -94,6 +94,16 @@
                     dashboard = tableau.extensions.dashboardContent.dashboard;
                     setupEventListeners();
                     testOllamaConnection();
+        
+                    // ✅ 初期状態がチェックオンなら表示処理を実行
+                    if (document.getElementById('include-data').checked) {
+                        document.getElementById('sheet-select-group').style.display = 'block';
+                        document.getElementById('preview-group').style.display = 'block';
+                        populateSheetSelect();
+                        await updateSheetReference();
+                        await showDataPreview();
+                    }
+        
                 }).catch(function (err) {
                     showError('初期化に失敗しました: ' + err);
                 });
