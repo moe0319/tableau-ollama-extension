@@ -1,13 +1,13 @@
+
 <!DOCTYPE html>
 <html>
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Ollama Tableau Integration</title>
-    
-    <!-- Tableau Extensions API -->
+
     <script src="https://cdn.jsdelivr.net/npm/@tableau/extensions-api/lib/tableau.extensions.1.latest.min.js"></script>
-    
+
     <style>
         body {
             font-family: 'Segoe UI', Arial, sans-serif;
@@ -15,92 +15,36 @@
             max-width: 800px;
             margin: 0 auto;
         }
-        
-        .form-group {
-            margin-bottom: 15px;
-        }
-        
-        label {
-            display: block;
-            margin-bottom: 5px;
-            font-weight: bold;
-        }
-        
+        .form-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; }
         textarea, select, input {
-            width: 100%;
-            padding: 8px;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-            box-sizing: border-box;
+            width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box;
         }
-        
         button {
-            background-color: #2e77d0;
-            color: white;
-            border: none;
-            padding: 10px 15px;
-            border-radius: 4px;
-            cursor: pointer;
+            background-color: #2e77d0; color: white; border: none; padding: 10px 15px; border-radius: 4px; cursor: pointer;
         }
-        
-        button:disabled {
-            background-color: #cccccc;
-            cursor: not-allowed;
-        }
-        
+        button:disabled { background-color: #cccccc; cursor: not-allowed; }
         #response-area {
-            min-height: 150px;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-            padding: 10px;
-            margin-top: 10px;
-            background-color: #f9f9f9;
-            white-space: pre-wrap;
-            font-family: monospace;
+            min-height: 150px; border: 1px solid #ddd; border-radius: 4px; padding: 10px;
+            margin-top: 10px; background-color: #f9f9f9; white-space: pre-wrap; font-family: monospace;
         }
-        
-        .spinner {
-            display: none;
-            margin-left: 10px;
-            vertical-align: middle;
-        }
-        
-        .error {
-            color: #dc3545;
-            margin-top: 10px;
-        }
-        
-        .success {
-            color: #28a745;
-            margin-top: 10px;
-        }
-        
+        .spinner { display: none; margin-left: 10px; vertical-align: middle; }
+        .error { color: #dc3545; margin-top: 10px; }
+        .success { color: #28a745; margin-top: 10px; }
         .warning {
-            background-color: #fff3cd;
-            border: 1px solid #ffeeba;
-            color: #856404;
-            padding: 10px;
-            margin-bottom: 15px;
-            border-radius: 4px;
+            background-color: #fff3cd; border: 1px solid #ffeeba; color: #856404;
+            padding: 10px; margin-bottom: 15px; border-radius: 4px;
         }
     </style>
 </head>
 <body>
     <h2>Ollama Tableau 拡張機能</h2>
-    
-    <div class="warning">
-        <strong>重要:</strong> この拡張機能を使用するには、以下のいずれかの方法でCORS制限を回避する必要があります：
-        <ul>
-            <li>EdgeのCORS関連拡張機能（CORS Unblock, Allow CORS等）を有効にする</li>
-            <li>または、Edgeを特別なモード（--disable-web-security）で起動する</li>
-        </ul>
-    </div>
-    
+
     <div class="form-group">
         <label for="ollama-url">Ollama サーバーURL:</label>
         <input type="text" id="ollama-url" value="http://localhost:8889" placeholder="http://localhost:8889">
     </div>
-    
+
     <div class="form-group">
         <label for="model-select">モデル:</label>
         <select id="model-select">
@@ -110,88 +54,122 @@
             <option value="gemma">gemma</option>
         </select>
     </div>
-    
+
     <div class="form-group">
         <label for="prompt-input">プロンプト:</label>
         <textarea id="prompt-input" rows="4" placeholder="Ollamaに送信するプロンプトを入力してください..."></textarea>
     </div>
-    
+
     <div style="margin-bottom: 15px;">
         <input type="checkbox" id="include-data" checked>
         <label for="include-data" style="display: inline;">ダッシュボードのデータを含める</label>
     </div>
-    
+
+    <div class="form-group" id="sheet-select-group" style="display: none;">
+        <label for="sheet-select">使用するワークシート:</label>
+        <select id="sheet-select"></select>
+    </div>
+
+    <div class="form-group" id="preview-group" style="display: none;">
+        <label for="data-preview">データプレビュー:</label>
+        <div id="data-preview" style="overflow-x:auto; border:1px solid #ddd; padding:10px; background:#f1f1f1; font-family:monospace;"></div>
+    </div>
+
     <button id="send-button">送信</button>
     <span class="spinner" id="spinner">処理中...</span>
-    
+
     <div id="status-message"></div>
-    
-    <div class="form-group" style="margin-top: 15px;">
+
+    <div class="form-group">
         <label for="response-area">Ollamaの応答:</label>
         <div id="response-area"></div>
     </div>
-    
+
     <script>
         let sheet, dashboard;
-        
-        document.addEventListener('DOMContentLoaded', function() {
-            console.log('DOM Content Loaded');
-            
-            // Tableau拡張機能の初期化
+
+        document.addEventListener('DOMContentLoaded', function () {
             if (typeof tableau !== 'undefined') {
-                tableau.extensions.initializeAsync().then(function() {
-                    console.log('Tableau extension initialized');
-                    
+                tableau.extensions.initializeAsync().then(async function () {
                     dashboard = tableau.extensions.dashboardContent.dashboard;
-                    
-                    // 最初のワークシートを取得
-                    if (dashboard.worksheets.length > 0) {
-                        sheet = dashboard.worksheets[0];
-                    }
-                    
                     setupEventListeners();
                     testOllamaConnection();
-                }).catch(function(err) {
-                    console.error('初期化エラー:', err);
-                    showError('Tableau拡張機能の初期化に失敗しました: ' + err);
+                }).catch(function (err) {
+                    showError('初期化に失敗しました: ' + err);
                 });
             } else {
-                // Tableau環境外でのテスト用
-                console.log('Running outside Tableau environment');
                 setupEventListeners();
                 testOllamaConnection();
             }
         });
-        
+
         function setupEventListeners() {
             document.getElementById('send-button').addEventListener('click', sendPrompt);
             document.getElementById('ollama-url').addEventListener('change', testOllamaConnection);
-        }
-        
-        // Ollamaサーバーのテスト接続
-        async function testOllamaConnection() {
-            const ollamaUrl = document.getElementById('ollama-url').value.trim();
-            
-            try {
-                // シンプルなテストリクエスト
-                const response = await fetch(ollamaUrl, {
-                    method: 'GET'
-                }).catch(error => {
-                    throw new Error('接続失敗: ' + error.message);
-                });
-                
-                if (response.ok) {
-                    showSuccess('Ollamaサーバーに接続できました');
-                } else {
-                    showError('Ollamaサーバーの応答エラー: ' + response.status);
+            document.getElementById('sheet-select').addEventListener('change', async () => {
+                await updateSheetReference();
+                await showDataPreview();
+            });
+            document.getElementById('include-data').addEventListener('change', async () => {
+                const checked = document.getElementById('include-data').checked;
+                document.getElementById('sheet-select-group').style.display = checked ? 'block' : 'none';
+                document.getElementById('preview-group').style.display = checked ? 'block' : 'none';
+
+                if (checked && typeof tableau !== 'undefined') {
+                    populateSheetSelect();
+                    await updateSheetReference();
+                    await showDataPreview();
                 }
-            } catch (error) {
-                console.error('接続テストエラー:', error);
-                showError('Ollamaサーバーに接続できません: ' + error.message);
+            });
+        }
+
+        function populateSheetSelect() {
+            const sheetSelect = document.getElementById('sheet-select');
+            sheetSelect.innerHTML = '';
+            dashboard.worksheets.forEach(ws => {
+                const option = document.createElement('option');
+                option.value = ws.name;
+                option.textContent = ws.name;
+                sheetSelect.appendChild(option);
+            });
+            sheet = dashboard.worksheets[0];
+        }
+
+        async function updateSheetReference() {
+            const selectedName = document.getElementById('sheet-select').value;
+            sheet = dashboard.worksheets.find(ws => ws.name === selectedName);
+        }
+
+        async function showDataPreview() {
+            const preview = document.getElementById('data-preview');
+            preview.textContent = '読み込み中...';
+            try {
+                const data = await sheet.getSummaryDataAsync();
+                const columns = data.columns.map(col => col.fieldName);
+                const rows = [];
+                for (let i = 0; i < Math.min(data.data.length, 100); i++) {
+                    const row = data.data[i];
+                    const formattedRow = row.map(cell => cell.formattedValue || cell.value || '').join('\t');
+                    rows.push(formattedRow);
+                }
+                const tableData = columns.join('\t') + '\n' + rows.join('\n');
+                preview.textContent = tableData;
+            } catch (err) {
+                preview.textContent = 'プレビュー取得失敗';
             }
         }
-        
-        // プロンプトを送信する関数
+
+        async function testOllamaConnection() {
+            const ollamaUrl = document.getElementById('ollama-url').value.trim();
+            try {
+                const response = await fetch(ollamaUrl, { method: 'GET' });
+                if (response.ok) showSuccess('Ollamaサーバーに接続できました');
+                else showError('応答エラー: ' + response.status);
+            } catch (error) {
+                showError('接続失敗: ' + error.message);
+            }
+        }
+
         async function sendPrompt() {
             const ollamaUrl = document.getElementById('ollama-url').value.trim();
             const modelName = document.getElementById('model-select').value;
@@ -200,93 +178,68 @@
             const responseArea = document.getElementById('response-area');
             const spinner = document.getElementById('spinner');
             const sendButton = document.getElementById('send-button');
-            
+
             if (!promptInput) {
                 alert('プロンプトを入力してください');
                 return;
             }
-            
-            // 送信中の表示
+
             spinner.style.display = 'inline';
             sendButton.disabled = true;
             responseArea.textContent = '処理中...';
-            showStatus('リクエスト送信中...');
-            
-            // プロンプトを作成（データを含める場合）
+            showStatus('送信中...');
+
             let finalPrompt = promptInput;
-            
             if (includeData && sheet && typeof tableau !== 'undefined') {
                 try {
                     const data = await sheet.getSummaryDataAsync();
                     const columns = data.columns.map(col => col.fieldName);
                     const rows = [];
-                    
                     for (let i = 0; i < Math.min(data.data.length, 100); i++) {
                         const row = data.data[i];
-                        rows.push(columns.map(col => {
-                            const cellValue = row[col].formattedValue || row[col].value || '';
-                            return cellValue;
-                        }).join('\t'));
+                        const formattedRow = row.map(cell => cell.formattedValue || cell.value || '').join('\t');
+                        rows.push(formattedRow);
                     }
-                    
                     const tableData = columns.join('\t') + '\n' + rows.join('\n');
                     finalPrompt = `以下のTableauデータを分析して回答してください:\n\n${tableData}\n\n${promptInput}`;
                 } catch (error) {
-                    console.error('データ取得エラー:', error);
-                    showError('データの取得に失敗しました: ' + error.message);
+                    showError('データ取得失敗: ' + error.message);
                     spinner.style.display = 'none';
                     sendButton.disabled = false;
                     return;
                 }
             }
-            
-            // Ollamaへリクエストを送信
+
             try {
                 const response = await fetch(`${ollamaUrl}/api/generate`, {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        model: modelName,
-                        prompt: finalPrompt,
-                        stream: false
-                    })
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ model: modelName, prompt: finalPrompt, stream: false })
                 });
-                
-                if (!response.ok) {
-                    throw new Error(`HTTP error! Status: ${response.status}`);
-                }
-                
+                if (!response.ok) throw new Error(`HTTP error! Status: ${response.status}`);
                 const data = await response.json();
                 responseArea.textContent = data.response || 'レスポンスが空です';
                 showSuccess('応答を受信しました');
             } catch (error) {
-                console.error('Ollamaリクエストエラー:', error);
-                showError('エラーが発生しました: ' + error.message);
+                showError('送信失敗: ' + error.message);
                 responseArea.textContent = '';
             } finally {
                 spinner.style.display = 'none';
                 sendButton.disabled = false;
             }
         }
-        
-        function showError(message) {
-            const statusMessage = document.getElementById('status-message');
-            statusMessage.textContent = message;
-            statusMessage.className = 'error';
+
+        function showError(msg) {
+            const status = document.getElementById('status-message');
+            status.textContent = msg; status.className = 'error';
         }
-        
-        function showSuccess(message) {
-            const statusMessage = document.getElementById('status-message');
-            statusMessage.textContent = message;
-            statusMessage.className = 'success';
+        function showSuccess(msg) {
+            const status = document.getElementById('status-message');
+            status.textContent = msg; status.className = 'success';
         }
-        
-        function showStatus(message) {
-            const statusMessage = document.getElementById('status-message');
-            statusMessage.textContent = message;
-            statusMessage.className = '';
+        function showStatus(msg) {
+            const status = document.getElementById('status-message');
+            status.textContent = msg; status.className = '';
         }
     </script>
 </body>
