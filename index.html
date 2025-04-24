@@ -1,134 +1,582 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <meta charset="utf-8">
-  <title>Ollama + Tableau 拡張機能</title>
-  <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@tableau/extensions-api/lib/tableau.extensions.1.latest.min.js"></script>
-  <style>
-    body { font-family: sans-serif; padding: 20px; max-width: 900px; margin: auto; }
-    .form-group { margin-bottom: 20px; }
-    textarea, select, input[type=text] { width: 100%; padding: 8px; margin-top: 5px; box-sizing: border-box; }
-    #data-preview { white-space: pre-wrap; font-family: monospace; background: #f8f8f8; padding: 10px; border: 1px solid #ccc; margin-top: 10px; display: none; }
-    #sheet-select-group { display: none; }
-  </style>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Ollama Tableau Integration</title>
+
+    <script src="https://cdn.jsdelivr.net/npm/@tableau/extensions-api/lib/tableau.extensions.1.latest.min.js"></script>
+
+    <style>
+        body {
+            font-family: 'Segoe UI', Arial, sans-serif;
+            padding: 15px;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        .form-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; }
+        textarea, select, input {
+            width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box;
+        }
+        button {
+            background-color: #2e77d0; color: white; border: none; padding: 10px 15px; border-radius: 4px; cursor: pointer;
+        }
+        button:disabled { background-color: #cccccc; cursor: not-allowed; }
+        #response-area {
+            min-height: 150px; border: 1px solid #ddd; border-radius: 4px; padding: 10px;
+            margin-top: 10px; background-color: #f9f9f9; white-space: pre-wrap; font-family: monospace;
+        }
+        .spinner { display: none; margin-left: 10px; vertical-align: middle; }
+        .error { color: #dc3545; margin-top: 10px; }
+        .success { color: #28a745; margin-top: 10px; }
+        .warning {
+            background-color: #fff3cd; border: 1px solid #ffeeba; color: #856404;
+            padding: 10px; margin-bottom: 15px; border-radius: 4px;
+        }
+        .data-table {
+            border-collapse: collapse;
+            width: 100%;
+            margin-top: 10px;
+            font-size: 0.8em;
+        }
+        .data-table th, .data-table td {
+            border: 1px solid #ddd;
+            padding: 4px;
+            text-align: left;
+        }
+        .data-table th {
+            background-color: #f2f2f2;
+        }
+        .filters-info {
+            margin-top: 10px;
+            font-size: 0.8em;
+            background-color: #e9f5ff;
+            border: 1px solid #b8daff;
+            padding: 8px;
+            border-radius: 4px;
+        }
+        .collapsible {
+            background-color: #f1f1f1;
+            color: #444;
+            cursor: pointer;
+            padding: 10px;
+            width: 100%;
+            border: none;
+            text-align: left;
+            outline: none;
+            font-size: 14px;
+            margin-top: 10px;
+            border-radius: 4px;
+        }
+        .active, .collapsible:hover {
+            background-color: #e0e0e0;
+        }
+        .content {
+            padding: 0 10px;
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.2s ease-out;
+            background-color: #f9f9f9;
+            border-radius: 0 0 4px 4px;
+        }
+    </style>
 </head>
 <body>
-  <h2>Ollama + Tableau 拡張機能</h2>
+    <h2>Ollama Tableau 拡張機能</h2>
+    <div class="warning">
+        <strong>重要:</strong> CORS制限回避のため、プロキシサーバー(http://localhost:8889)を使用しています。
+    </div>
 
-  <div class="form-group">
-    <label for="ollama-url">Ollama サーバー URL:</label>
-    <input type="text" id="ollama-url" value="http://localhost:8889">
-  </div>
+    <div class="form-group">
+        <label for="ollama-url">Ollama サーバーURL:</label>
+        <input type="text" id="ollama-url" value="http://localhost:8889" placeholder="http://localhost:8889">
+    </div>
 
-  <div class="form-group">
-    <label for="model-select">モデル:</label>
-    <select id="model-select">
-      <option value="phi4">phi4</option>
-      <option value="llama2">llama2</option>
-      <option value="mistral">mistral</option>
-    </select>
-  </div>
+    <div class="form-group">
+        <label for="model-select">モデル:</label>
+        <select id="model-select">
+            <option value="phi4">phi4</option>
+            <option value="llama2">llama2</option>
+            <option value="mistral">mistral</option>
+            <option value="gemma">gemma</option>
+        </select>
+    </div>
 
-  <div class="form-group">
-    <label for="prompt">プロンプト:</label>
-    <textarea id="prompt" rows="4"></textarea>
-  </div>
+    <div class="form-group">
+        <label for="prompt-input">プロンプト:</label>
+        <textarea id="prompt-input" rows="4" placeholder="Ollamaに送信するプロンプトを入力してください..."></textarea>
+    </div>
 
-  <div class="form-group">
-    <label><input type="checkbox" id="include-data"> ダッシュボードのデータを含める</label>
-  </div>
+    <div style="margin-bottom: 15px;">
+        <input type="checkbox" id="include-data" checked>
+        <label for="include-data" style="display: inline;">ダッシュボードのデータを含める</label>
+    </div>
 
-  <div class="form-group" id="sheet-select-group">
-    <label for="sheet-select">ワークシートを選択:</label>
-    <select id="sheet-select"></select>
-  </div>
+    <div class="form-group" id="sheet-select-group">
+        <label for="sheet-select">使用するワークシート:</label>
+        <select id="sheet-select"></select>
+        <button id="refresh-data" style="margin-top: 5px; background-color: #6c757d;">データを更新</button>
+    </div>
 
-  <div id="data-preview"></div>
+    <button class="collapsible">データプレビューとフィルター情報</button>
+    <div class="content">
+        <div id="filters-info" class="filters-info">
+            <p>フィルター情報を読み込み中...</p>
+        </div>
+        
+        <div class="form-group" id="preview-group">
+            <label for="data-preview">データプレビュー (最大10行):</label>
+            <div id="data-preview" style="overflow-x:auto;"></div>
+        </div>
+    </div>
 
-  <button id="send-button">送信</button>
-  <div id="response" style="margin-top: 20px;"></div>
+    <button id="send-button" style="margin-top: 15px;">送信</button>
+    <span class="spinner" id="spinner">処理中...</span>
 
-  <script>
-    let dashboard = null;
-    let currentSheet = null;
-    let previewTable = '';
+    <div id="status-message"></div>
 
-    $(document).ready(function () {
-      tableau.extensions.initializeAsync().then(function () {
-        dashboard = tableau.extensions.dashboardContent.dashboard;
+    <div class="form-group" style="margin-top: 15px;">
+        <label for="response-area">Ollamaの応答:</label>
+        <div id="response-area"></div>
+    </div>
 
-        $('#include-data').on('change', function () {
-          if (this.checked) {
-            $('#sheet-select-group').show();
-            $('#data-preview').show();
-            populateWorksheetDropdown();
-          } else {
-            $('#sheet-select-group').hide();
-            $('#data-preview').hide();
-            previewTable = '';
-          }
+    <script>
+        let sheets = [];
+        let currentSheet;
+        let dashboard;
+        let previewData = null;
+        let currentFilters = [];
+
+        document.addEventListener('DOMContentLoaded', function () {
+            console.log('DOM Content Loaded');
+            
+            // 折りたたみパネルの設定
+            const coll = document.getElementsByClassName("collapsible");
+            for (let i = 0; i < coll.length; i++) {
+                coll[i].addEventListener("click", function() {
+                    this.classList.toggle("active");
+                    const content = this.nextElementSibling;
+                    if (content.style.maxHeight) {
+                        content.style.maxHeight = null;
+                    } else {
+                        content.style.maxHeight = content.scrollHeight + "px";
+                    }
+                });
+            }
+            
+            if (typeof tableau !== 'undefined' && tableau.extensions) {
+                tableau.extensions.initializeAsync().then(async function () {
+                    console.log('Tableau extension initialized');
+                    
+                    dashboard = tableau.extensions.dashboardContent.dashboard;
+                    sheets = dashboard.worksheets;
+                    
+                    if (sheets.length > 0) {
+                        populateSheetSelector();
+                        await updateSelectedSheet();
+                        await fetchFiltersInfo();
+                        await refreshDataPreview();
+                    } else {
+                        showError('このダッシュボードにはワークシートがありません');
+                    }
+                    
+                    setupEventListeners();
+                    testOllamaConnection();
+                }).catch(function (err) {
+                    console.error('初期化エラー:', err);
+                    showError('Tableau拡張機能の初期化に失敗しました: ' + err);
+                });
+            } else {
+                console.log('Running outside Tableau or Tableau API not available');
+                setupEventListeners();
+                document.getElementById('sheet-select-group').style.display = 'none';
+                document.getElementById('preview-group').style.display = 'none';
+                document.getElementById('filters-info').innerHTML = '<p>Tableau環境外で実行中のため、フィルター情報はありません</p>';
+                testOllamaConnection();
+            }
         });
 
-        $('#sheet-select').on('change', function () {
-          const selectedName = $(this).val();
-          currentSheet = dashboard.worksheets.find(ws => ws.name === selectedName);
-          updatePreview(currentSheet);
-        });
-
-        $('#send-button').on('click', async function () {
-          const url = $('#ollama-url').val().trim();
-          const model = $('#model-select').val();
-          const prompt = $('#prompt').val().trim();
-          const includeData = $('#include-data').is(':checked');
-          let finalPrompt = prompt;
-
-          if (includeData && currentSheet) {
-            finalPrompt = "以下のTableauデータを参考にしてください:\\n\\n" + previewTable + "\\n\\n" + prompt;
-          }
-
-          $('#response').text('送信中...');
-          try {
-            const res = await fetch(url + "/api/generate", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ model: model, prompt: finalPrompt, stream: false })
+        function setupEventListeners() {
+            document.getElementById('send-button').addEventListener('click', sendPrompt);
+            document.getElementById('ollama-url').addEventListener('change', testOllamaConnection);
+            document.getElementById('sheet-select').addEventListener('change', async function() {
+                await updateSelectedSheet();
+                await fetchFiltersInfo();
+                await refreshDataPreview();
             });
-            const data = await res.json();
-            $('#response').text(data.response || '応答がありません');
-          } catch (err) {
-            $('#response').text('送信エラー: ' + err.message);
-          }
-        });
-      });
-    });
+            document.getElementById('include-data').addEventListener('change', function() {
+                const includeData = document.getElementById('include-data').checked;
+                document.getElementById('sheet-select-group').style.display = includeData ? 'block' : 'none';
+                const collapsible = document.querySelector('.collapsible');
+                collapsible.style.display = includeData ? 'block' : 'none';
+                if (!includeData) {
+                    const content = collapsible.nextElementSibling;
+                    content.style.maxHeight = null;
+                }
+            });
+            document.getElementById('refresh-data').addEventListener('click', async function() {
+                await fetchFiltersInfo();
+                await refreshDataPreview();
+            });
+        }
 
-    function populateWorksheetDropdown() {
-      const $select = $('#sheet-select');
-      $select.empty();
-      dashboard.worksheets.forEach(sheet => {
-        $select.append($('<option>', { value: sheet.name, text: sheet.name }));
-      });
-      const first = dashboard.worksheets[0];
-      $select.val(first.name);
-      currentSheet = first;
-      updatePreview(first);
-    }
+        function populateSheetSelector() {
+            const sheetSelect = document.getElementById('sheet-select');
+            sheetSelect.innerHTML = '';
+            
+            sheets.forEach(function(worksheet) {
+                const option = document.createElement('option');
+                option.value = worksheet.name;
+                option.textContent = worksheet.name;
+                sheetSelect.appendChild(option);
+            });
+        }
 
-    function updatePreview(sheet) {
-      $('#data-preview').text('読み込み中...');
-      sheet.getSummaryDataAsync().then(function (dataTable) {
-        const columns = dataTable.columns.map(c => c.fieldName).join('\\t');
-        const rows = dataTable.data.slice(0, 100).map(row =>
-          row.map(cell => cell.formattedValue || cell.value || '').join('\\t')
-        ).join('\\n');
-        previewTable = columns + '\\n' + rows;
-        $('#data-preview').text(previewTable);
-      }).catch(function (err) {
-        $('#data-preview').text('取得エラー: ' + err.message);
-        previewTable = '';
-      });
-    }
-  </script>
+        async function updateSelectedSheet() {
+            const selectedSheetName = document.getElementById('sheet-select').value;
+            currentSheet = sheets.find(sheet => sheet.name === selectedSheetName);
+            console.log('Selected sheet:', currentSheet ? currentSheet.name : 'None');
+            
+            // ワークシートが変更されたらフィルターイベントリスナーを設定
+            if (currentSheet) {
+                currentSheet.addEventListener(tableau.TableauEventType.FilterChanged, async function(filterEvent) {
+                    console.log('Filter changed:', filterEvent);
+                    await fetchFiltersInfo();
+                    await refreshDataPreview();
+                });
+            }
+        }
+
+        async function fetchFiltersInfo() {
+            if (!currentSheet) return;
+            
+            const filtersInfo = document.getElementById('filters-info');
+            filtersInfo.innerHTML = '<p>フィルター情報を読み込み中...</p>';
+            
+            try {
+                currentFilters = await currentSheet.getFiltersAsync();
+                
+                if (currentFilters.length === 0) {
+                    filtersInfo.innerHTML = '<p>このワークシートには適用されているフィルターがありません</p>';
+                    return;
+                }
+                
+                let filterHtml = '<h4>適用されているフィルター:</h4><ul>';
+                
+                currentFilters.forEach(function(filter) {
+                    filterHtml += `<li><strong>${filter.fieldName}</strong> (${filter.filterType}): ${getFilterValues(filter)}</li>`;
+                });
+                
+                filterHtml += '</ul>';
+                filtersInfo.innerHTML = filterHtml;
+                
+                // 折りたたみパネルの高さを更新
+                const content = document.querySelector('.content');
+                if (content.style.maxHeight) {
+                    content.style.maxHeight = content.scrollHeight + "px";
+                }
+            } catch (error) {
+                console.error('フィルター取得エラー:', error);
+                filtersInfo.innerHTML = '<p>フィルター情報の取得に失敗しました: ' + error.message + '</p>';
+            }
+        }
+        
+        // フィルター値を文字列で取得する関数
+        function getFilterValues(filter) {
+            let filterValues = '';
+
+            switch (filter.filterType) {
+                case 'categorical':
+                    if (filter.appliedValues && filter.appliedValues.length > 0) {
+                        filter.appliedValues.forEach(function(value) {
+                            filterValues += value.formattedValue + ', ';
+                        });
+                        // 最後のカンマとスペースを削除
+                        filterValues = filterValues.slice(0, -2);
+                    } else {
+                        filterValues = '(値なし)';
+                    }
+                    break;
+                case 'range':
+                    // 範囲フィルターは最小値と最大値を持つことがある
+                    if (filter.minValue) {
+                        filterValues += '最小: ' + filter.minValue.formattedValue;
+                    }
+                    if (filter.minValue && filter.maxValue) {
+                        filterValues += ', ';
+                    }
+                    if (filter.maxValue) {
+                        filterValues += '最大: ' + filter.maxValue.formattedValue;
+                    }
+                    if (!filterValues) {
+                        filterValues = '(範囲なし)';
+                    }
+                    break;
+                case 'relative-date':
+                    filterValues += '期間: ' + filter.periodType;
+                    if (filter.rangeN !== undefined) {
+                        filterValues += ', 範囲: ' + filter.rangeN;
+                    }
+                    if (filter.rangeType) {
+                        filterValues += ', タイプ: ' + filter.rangeType;
+                    }
+                    break;
+                default:
+                    filterValues = '(不明なフィルター形式)';
+            }
+
+            return filterValues;
+        }
+
+        async function refreshDataPreview() {
+            if (!currentSheet) return;
+            
+            const dataPreview = document.getElementById('data-preview');
+            dataPreview.innerHTML = '<p>データ読み込み中...</p>';
+            
+            try {
+                // データの取得
+                const dataTable = await currentSheet.getSummaryDataAsync();
+                previewData = dataTable;
+                
+                // データが空かどうかチェック
+                if (!dataTable || !dataTable.data || dataTable.data.length === 0) {
+                    dataPreview.innerHTML = '<p>データがありません</p>';
+                    return;
+                }
+                
+                // テーブルの作成
+                const table = document.createElement('table');
+                table.className = 'data-table';
+                
+                // ヘッダー行の作成
+                const headerRow = document.createElement('tr');
+                dataTable.columns.forEach(column => {
+                    const th = document.createElement('th');
+                    th.textContent = column.fieldName;
+                    headerRow.appendChild(th);
+                });
+                
+                const thead = document.createElement('thead');
+                thead.appendChild(headerRow);
+                table.appendChild(thead);
+                
+                // データ行の作成（最大10行まで）
+                const tbody = document.createElement('tbody');
+                const maxRows = Math.min(dataTable.data.length, 10);
+                
+                for (let i = 0; i < maxRows; i++) {
+                    const dataRow = dataTable.data[i];
+                    const tr = document.createElement('tr');
+                    
+                    dataTable.columns.forEach((column, colIndex) => {
+                        const td = document.createElement('td');
+                        td.textContent = dataRow[colIndex].formattedValue || dataRow[colIndex].value || '';
+                        tr.appendChild(td);
+                    });
+                    
+                    tbody.appendChild(tr);
+                }
+                
+                table.appendChild(tbody);
+                
+                // テーブルをプレビュー領域に追加
+                dataPreview.innerHTML = '';
+                dataPreview.appendChild(table);
+                
+                // 合計行数の表示
+                const totalRows = document.createElement('p');
+                totalRows.textContent = `全 ${dataTable.data.length} 行中 ${maxRows} 行を表示しています。`;
+                totalRows.style.marginTop = '5px';
+                totalRows.style.fontSize = '0.8em';
+                dataPreview.appendChild(totalRows);
+                
+                // 折りたたみパネルの高さを更新
+                const content = document.querySelector('.content');
+                if (content.style.maxHeight) {
+                    content.style.maxHeight = content.scrollHeight + "px";
+                }
+                
+                showSuccess('データを取得しました');
+            } catch (error) {
+                console.error('データ取得エラー:', error);
+                dataPreview.innerHTML = '<p>データの取得に失敗しました: ' + error.message + '</p>';
+                showError('データの取得に失敗しました: ' + error.message);
+            }
+        }
+
+        async function testOllamaConnection() {
+            const ollamaUrl = document.getElementById('ollama-url').value.trim();
+            try {
+                const response = await fetch(ollamaUrl, {
+                    method: 'GET'
+                });
+                
+                if (response.ok) {
+                    showSuccess('Ollamaサーバーに接続できました');
+                    
+                    // モデル一覧を取得
+                    try {
+                        const tagsResponse = await fetch(`${ollamaUrl}/api/tags`, {
+                            method: 'GET'
+                        });
+                        
+                        if (tagsResponse.ok) {
+                            const tagsData = await tagsResponse.json();
+                            updateModelSelector(tagsData);
+                        }
+                    } catch (tagsError) {
+                        console.log('モデル一覧の取得に失敗しました:', tagsError);
+                        // モデル一覧取得失敗は致命的でないのでエラー表示はしない
+                    }
+                } else {
+                    showError('Ollamaサーバーの応答エラー: ' + response.status);
+                }
+            } catch (error) {
+                console.error('接続テストエラー:', error);
+                showError('Ollamaサーバーに接続できません: ' + error.message);
+            }
+        }
+        
+        function updateModelSelector(tagsData) {
+            if (!tagsData || !tagsData.models || tagsData.models.length === 0) {
+                return;
+            }
+            
+            const modelSelect = document.getElementById('model-select');
+            modelSelect.innerHTML = '';
+            
+            tagsData.models.forEach(model => {
+                const option = document.createElement('option');
+                option.value = model.name;
+                option.textContent = model.name;
+                modelSelect.appendChild(option);
+            });
+        }
+
+        async function sendPrompt() {
+            const ollamaUrl = document.getElementById('ollama-url').value.trim();
+            const modelName = document.getElementById('model-select').value;
+            const promptInput = document.getElementById('prompt-input').value.trim();
+            const includeData = document.getElementById('include-data').checked;
+            const responseArea = document.getElementById('response-area');
+            const spinner = document.getElementById('spinner');
+            const sendButton = document.getElementById('send-button');
+            
+            if (!promptInput) {
+                alert('プロンプトを入力してください');
+                return;
+            }
+            
+            // 送信中の表示
+            spinner.style.display = 'inline';
+            sendButton.disabled = true;
+            responseArea.textContent = '処理中...';
+            showStatus('リクエスト送信中...');
+            
+            // プロンプトを作成
+            let finalPrompt = promptInput;
+            
+            if (includeData && currentSheet && previewData) {
+                try {
+                    // プレビューデータを文字列に変換
+                    let tableText = '';
+                    
+                    // ヘッダー行
+                    const headers = previewData.columns.map(col => col.fieldName);
+                    tableText += headers.join('\t') + '\n';
+                    
+                    // データ行
+                    for (let i = 0; i < previewData.data.length; i++) {
+                        const row = previewData.data[i];
+                        const rowValues = [];
+                        
+                        for (let j = 0; j < row.length; j++) {
+                            rowValues.push(row[j].formattedValue || row[j].value || '');
+                        }
+                        
+                        tableText += rowValues.join('\t') + '\n';
+                    }
+                    
+                    // フィルター情報を追加
+                    let filtersText = '';
+                    if (currentFilters && currentFilters.length > 0) {
+                        filtersText = '\n適用中のフィルター:\n';
+                        currentFilters.forEach(function(filter) {
+                            filtersText += `- ${filter.fieldName} (${filter.filterType}): ${getFilterValues(filter)}\n`;
+                        });
+                    }
+                    
+                    // プロンプトにデータとフィルター情報を追加
+                    finalPrompt = `以下のTableauデータを分析して回答してください:${filtersText}\n${tableText}\n\n${promptInput}`;
+                    console.log('データとフィルター情報を含むプロンプトを作成しました');
+                } catch (error) {
+                    console.error('データ変換エラー:', error);
+                    showError('データの変換に失敗しました: ' + error.message);
+                    spinner.style.display = 'none';
+                    sendButton.disabled = false;
+                    return;
+                }
+            }
+            
+            // Ollamaへリクエストを送信
+            try {
+                console.log('Ollamaにリクエスト送信中:', ollamaUrl);
+                
+                const response = await fetch(`${ollamaUrl}/api/generate`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        model: modelName,
+                        prompt: finalPrompt,
+                        stream: false
+                    })
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! Status: ${response.status}`);
+                }
+                
+                const data = await response.json();
+                console.log('レスポンス受信:', data);
+                
+                if (data && data.response) {
+                    responseArea.textContent = data.response;
+                    showSuccess('応答を受信しました');
+                } else {
+                    responseArea.textContent = 'レスポンスが空か不正な形式です';
+                    showError('不正なレスポンス形式');
+                }
+            } catch (error) {
+                console.error('Ollamaリクエストエラー:', error);
+                showError('エラーが発生しました: ' + error.message);
+                responseArea.textContent = '';
+            } finally {
+                spinner.style.display = 'none';
+                sendButton.disabled = false;
+            }
+        }
+
+        function showError(message) {
+            const statusMessage = document.getElementById('status-message');
+            statusMessage.textContent = message;
+            statusMessage.className = 'error';
+        }
+        
+        function showSuccess(message) {
+            const statusMessage = document.getElementById('status-message');
+            statusMessage.textContent = message;
+            statusMessage.className = 'success';
+        }
+        
+        function showStatus(message) {
+            const statusMessage = document.getElementById('status-message');
+            statusMessage.textContent = message;
+            statusMessage.className = '';
+        }
+    </script>
 </body>
 </html>
