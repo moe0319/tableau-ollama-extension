@@ -83,10 +83,12 @@
     <div style="margin-bottom: 15px;">
         <input type="checkbox" id="include-data" checked>
         <label for="include-data" style="display: inline;">ダッシュボードのデータを含める</label>
+        <button id="reload-button" style="margin-left: 10px;">再読み込み</button>
     </div>
 
     <div id="sheets-container" style="display: none;">
         <h3>使用するワークシート:</h3>
+        <div id="sheet-status"></div>
         <div id="sheet-selectors">
             <!-- シート選択がここに動的に生成されます -->
         </div>
@@ -124,42 +126,110 @@
         // func.jsからインポートする関数のエミュレーション
         const initializeMeta = async () => {
             console.log('Initializing Meta');
-            let meta = [];
-            const worksheets = tableau.extensions.dashboardContent.dashboard.worksheets;
-            
-            for (let i = 0; i < worksheets.length; i++) {
-                const sheet = worksheets[i];
-                let item = {
-                    sheetName: sheet.name,
-                    selected: false,
-                    changeName: null,
-                    customCols: false
-                };
-                
-                try {
-                    const data = await sheet.getSummaryDataAsync({ignoreSelection: true});
-                    const columns = data.columns;
-                    let cols = [];
-                    
-                    for (let k = 0; k < columns.length; k++) {
-                        let newCol = {};
-                        newCol.index = columns[k].index;
-                        newCol.name = columns[k].fieldName;
-                        newCol.dataType = columns[k].dataType;
-                        newCol.selected = true;
-                        newCol.order = k + 1;
-                        cols.push(newCol);
-                    }
-                    
-                    item.columns = cols;
-                } catch (error) {
-                    console.error(`Error getting data for ${sheet.name}:`, error);
-                }
-                
-                meta.push(item);
+            const statusElement = document.getElementById('sheet-status');
+            if (statusElement) {
+                statusElement.innerHTML = '<div class="warning">ワークシートデータを読み込み中...</div>';
             }
             
-            return meta;
+            let meta = [];
+            
+            try {
+                // Make sure tableau extensions exist and are loaded
+                if (!tableau || !tableau.extensions || !tableau.extensions.dashboardContent) {
+                    console.error('Tableau Extensions API not available');
+                    if (statusElement) {
+                        statusElement.innerHTML = '<div class="error">Tableau Extensions APIが利用できません</div>';
+                    }
+                    return [];
+                }
+                
+                const dashboard = tableau.extensions.dashboardContent.dashboard;
+                if (!dashboard) {
+                    console.error('Dashboard not available');
+                    if (statusElement) {
+                        statusElement.innerHTML = '<div class="error">ダッシュボードが見つかりません</div>';
+                    }
+                    return [];
+                }
+                
+                const worksheets = dashboard.worksheets;
+                console.log(`Found ${worksheets.length} worksheets in dashboard`);
+                
+                if (worksheets.length === 0) {
+                    if (statusElement) {
+                        statusElement.innerHTML = '<div class="warning">ダッシュボードにワークシートが見つかりません</div>';
+                    }
+                    return [];
+                }
+                
+                for (let i = 0; i < worksheets.length; i++) {
+                    const sheet = worksheets[i];
+                    console.log(`Processing worksheet: ${sheet.name}`);
+                    
+                    if (statusElement) {
+                        statusElement.innerHTML = `<div class="warning">ワークシート「${sheet.name}」を処理中...</div>`;
+                    }
+                    
+                    let item = {
+                        sheetName: sheet.name,
+                        selected: true, // Default to selected
+                        changeName: null,
+                        customCols: false
+                    };
+                    
+                    try {
+                        // First try with ignoreSelection: true
+                        let data;
+                        try {
+                            data = await sheet.getSummaryDataAsync({ignoreSelection: true});
+                        } catch (innerError) {
+                            console.warn(`Failed to get data with ignoreSelection true for ${sheet.name}:`, innerError);
+                            // Try again without ignoreSelection
+                            data = await sheet.getSummaryDataAsync();
+                        }
+                        
+                        if (!data || !data.columns) {
+                            console.warn(`No data returned for ${sheet.name}`);
+                            item.columns = [];
+                            continue;
+                        }
+                        
+                        const columns = data.columns;
+                        console.log(`Found ${columns.length} columns in ${sheet.name}`);
+                        
+                        let cols = [];
+                        for (let k = 0; k < columns.length; k++) {
+                            let newCol = {};
+                            newCol.index = columns[k].index;
+                            newCol.name = columns[k].fieldName;
+                            newCol.dataType = columns[k].dataType;
+                            newCol.selected = true;
+                            newCol.order = k + 1;
+                            cols.push(newCol);
+                        }
+                        
+                        item.columns = cols;
+                    } catch (error) {
+                        console.error(`Error getting data for ${sheet.name}:`, error);
+                        item.columns = [];
+                        item.error = error.message;
+                    }
+                    
+                    meta.push(item);
+                }
+                
+                if (statusElement) {
+                    statusElement.innerHTML = `<div class="success">${meta.length}個のワークシートを読み込みました</div>`;
+                }
+                
+                return meta;
+            } catch (error) {
+                console.error('Error in initializeMeta:', error);
+                if (statusElement) {
+                    statusElement.innerHTML = `<div class="error">エラー: ${error.message}</div>`;
+                }
+                return [];
+            }
         };
         
         const decodeDataset = async (columns, dataset) => {
@@ -190,12 +260,23 @@
             if (typeof tableau !== 'undefined') {
                 tableau.extensions.initializeAsync().then(async function () {
                     dashboard = tableau.extensions.dashboardContent.dashboard;
+                    console.log('Dashboard loaded:', dashboard.name);
+                    console.log('Worksheets found:', dashboard.worksheets.length);
+                    // Log worksheet names for debugging
+                    dashboard.worksheets.forEach(ws => {
+                        console.log('Worksheet found:', ws.name);
+                    });
+                    
                     sheetsMeta = await initializeMeta();
+                    console.log('Sheet meta initialized:', sheetsMeta);
+                    
                     setupEventListeners();
+                    toggleDataOptions(); // Make sure data options are visible if include-data is checked
                     renderSheetSelectors();
                     testOllamaConnection();
                 }).catch(function (err) {
                     showError('初期化に失敗しました: ' + err);
+                    console.error('Initialization error:', err);
                 });
             } else {
                 setupEventListeners();
@@ -207,9 +288,38 @@
             document.getElementById('send-button').addEventListener('click', sendPrompt);
             document.getElementById('ollama-url').addEventListener('change', testOllamaConnection);
             document.getElementById('include-data').addEventListener('change', toggleDataOptions);
+            document.getElementById('reload-button').addEventListener('click', reloadExtension);
             
             if (document.getElementById('preview-button')) {
                 document.getElementById('preview-button').addEventListener('click', showDataPreview);
+            }
+        }
+        
+        async function reloadExtension() {
+            const statusElement = document.getElementById('sheet-status');
+            if (statusElement) {
+                statusElement.innerHTML = '<div class="warning">拡張機能を再読み込み中...</div>';
+            }
+            
+            try {
+                dashboard = tableau.extensions.dashboardContent.dashboard;
+                console.log('Dashboard reloaded:', dashboard.name);
+                console.log('Worksheets found:', dashboard.worksheets.length);
+                
+                // Re-initialize sheets
+                sheetsMeta = await initializeMeta();
+                console.log('Sheet meta reinitialized:', sheetsMeta);
+                
+                // Make sure data options are visible if include-data is checked
+                toggleDataOptions();
+                
+                // Render sheet selectors
+                renderSheetSelectors();
+                
+                showSuccess('拡張機能を再読み込みしました');
+            } catch (err) {
+                showError('再読み込み失敗: ' + err.message);
+                console.error('Reload error:', err);
             }
         }
 
@@ -218,24 +328,104 @@
             document.getElementById('sheets-container').style.display = includeData ? 'block' : 'none';
             document.getElementById('data-format-group').style.display = includeData ? 'block' : 'none';
             document.getElementById('preview-button').style.display = includeData ? 'inline-block' : 'none';
+            
+            // Force update the sheet selectors when toggling
+            if (includeData && typeof tableau !== 'undefined') {
+                renderSheetSelectors();
+            }
         }
 
         function renderSheetSelectors() {
             const container = document.getElementById('sheet-selectors');
-            container.innerHTML = '';
+            if (!container) {
+                console.error('sheet-selectors container not found');
+                return;
+            }
             
+            // Clear the container
+            container.innerHTML = '';
+            console.log('Rendering sheet selectors for', sheetsMeta.length, 'sheets');
+            
+            // If no sheets, display message
+            if (!sheetsMeta || sheetsMeta.length === 0) {
+                const noSheetsDiv = document.createElement('div');
+                noSheetsDiv.className = 'warning';
+                noSheetsDiv.textContent = 'ワークシートが見つかりません。再読み込みしてください。';
+                container.appendChild(noSheetsDiv);
+                
+                // Add reload button
+                const reloadBtn = document.createElement('button');
+                reloadBtn.textContent = '再読み込み';
+                reloadBtn.style.marginTop = '10px';
+                reloadBtn.addEventListener('click', async () => {
+                    try {
+                        // Reinitialize
+                        dashboard = tableau.extensions.dashboardContent.dashboard;
+                        sheetsMeta = await initializeMeta();
+                        renderSheetSelectors();
+                        showSuccess('再読み込みしました');
+                    } catch (err) {
+                        showError('再読み込み失敗: ' + err.message);
+                    }
+                });
+                container.appendChild(reloadBtn);
+                return;
+            }
+            
+            // Manual alternative if Tableau Extensions API isn't working
+            if (sheetsMeta.length === 0 && typeof tableau !== 'undefined') {
+                // Try direct access to worksheets
+                try {
+                    const worksheets = tableau.extensions.dashboardContent.dashboard.worksheets;
+                    console.log('Direct worksheet access found', worksheets.length, 'sheets');
+                    
+                    // Create manual entries for each worksheet
+                    worksheets.forEach((sheet, index) => {
+                        console.log('Adding worksheet from direct access:', sheet.name);
+                        
+                        const sheetDiv = document.createElement('div');
+                        sheetDiv.className = 'sheet-selector';
+                        
+                        const sheetCheckbox = document.createElement('input');
+                        sheetCheckbox.type = 'checkbox';
+                        sheetCheckbox.id = `direct-sheet-${index}`;
+                        sheetCheckbox.checked = true;
+                        
+                        const sheetLabel = document.createElement('label');
+                        sheetLabel.htmlFor = `direct-sheet-${index}`;
+                        sheetLabel.style.display = 'inline';
+                        sheetLabel.textContent = sheet.name;
+                        
+                        sheetDiv.appendChild(sheetCheckbox);
+                        sheetDiv.appendChild(sheetLabel);
+                        container.appendChild(sheetDiv);
+                    });
+                } catch (err) {
+                    console.error('Direct worksheet access failed:', err);
+                }
+            }
+            
+            // Render sheets from sheetsMeta
             sheetsMeta.forEach((sheetMeta, index) => {
+                console.log('Rendering sheet selector for:', sheetMeta.sheetName);
+                
                 const sheetDiv = document.createElement('div');
                 sheetDiv.className = 'sheet-selector';
                 
                 const sheetCheckbox = document.createElement('input');
                 sheetCheckbox.type = 'checkbox';
                 sheetCheckbox.id = `sheet-${index}`;
-                sheetCheckbox.checked = false;
+                sheetCheckbox.checked = true; // Default to checked
                 sheetCheckbox.addEventListener('change', (e) => {
                     sheetsMeta[index].selected = e.target.checked;
-                    document.getElementById(`columns-${index}`).style.display = e.target.checked ? 'block' : 'none';
+                    const columnsDiv = document.getElementById(`columns-${index}`);
+                    if (columnsDiv) {
+                        columnsDiv.style.display = e.target.checked ? 'block' : 'none';
+                    }
                 });
+                
+                // Set the selected state in the metadata
+                sheetsMeta[index].selected = true;
                 
                 const sheetLabel = document.createElement('label');
                 sheetLabel.htmlFor = `sheet-${index}`;
@@ -249,6 +439,7 @@
                 const columnsDiv = document.createElement('div');
                 columnsDiv.id = `columns-${index}`;
                 columnsDiv.className = 'column-selector';
+                columnsDiv.style.display = 'block'; // Make columns visible by default
                 
                 if (sheetMeta.columns && sheetMeta.columns.length > 0) {
                     sheetMeta.columns.forEach((column, colIndex) => {
@@ -257,10 +448,13 @@
                         const colCheckbox = document.createElement('input');
                         colCheckbox.type = 'checkbox';
                         colCheckbox.id = `col-${index}-${colIndex}`;
-                        colCheckbox.checked = column.selected;
+                        colCheckbox.checked = true; // Default all columns to checked
                         colCheckbox.addEventListener('change', (e) => {
                             sheetsMeta[index].columns[colIndex].selected = e.target.checked;
                         });
+                        
+                        // Set the selected state in the metadata
+                        sheetsMeta[index].columns[colIndex].selected = true;
                         
                         const colLabel = document.createElement('label');
                         colLabel.htmlFor = `col-${index}-${colIndex}`;
@@ -271,6 +465,11 @@
                         colDiv.appendChild(colLabel);
                         columnsDiv.appendChild(colDiv);
                     });
+                } else {
+                    // Show loading message if no columns
+                    const loadingMsg = document.createElement('div');
+                    loadingMsg.textContent = 'カラム情報を読み込み中...';
+                    columnsDiv.appendChild(loadingMsg);
                 }
                 
                 sheetDiv.appendChild(columnsDiv);
